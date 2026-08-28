@@ -1,0 +1,35 @@
+# Private engineering inputs and runtime data
+.private/
+.local-data/
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node and frontend builds
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+
+# Logs and local databases
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Editor and operating system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
