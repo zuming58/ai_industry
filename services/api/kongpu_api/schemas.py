@@ -86,3 +86,9 @@ class SimulationRunRequest(BaseModel):
     input_overrides: dict[str, bool | int | float] = Field(default_factory=dict)
     max_cycles: int = Field(default=100, ge=1, le=10_000)
     expected_generation_revision: int = Field(ge=1)
+
+
+class AutomatedReviewRequest(BaseModel):
+    generation_run_id: str
+    repeat_count: int = Field(default=20, ge=2, le=50)
+    expected_generation_revision: int = Field(ge=1)

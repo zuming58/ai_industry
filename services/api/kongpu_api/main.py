@@ -15,6 +15,9 @@ from sqlalchemy.orm import Session
 from .artifacts import artifact_path, store_bytes
 from .adapters import descriptor, descriptors, detect as detect_adapter
 from .audit import audit_bundle
+from .automated_review import (
+    AUTOMATED_REVIEW_VERSION, EXTERNAL_VALIDATION_GATES, run_automated_review,
+)
 from .config import Settings, get_settings
 from .database import DatabaseRuntime
 from .generator import GeneratedBundle, GENERATOR_VERSION, content_hash, generate_bundle, stable_json
@@ -24,7 +27,8 @@ from .machine_spec import (
 )
 from .simulation import SimulationInputError, run_test_spec
 from .models import (
-    AdapterEnvironment, AuditEvent, CompileRun, ControlIRRevision, EvidenceArtifact,
+    AdapterEnvironment, AuditEvent, AutomatedReviewRun, CompileRun,
+    ControlIRRevision, EvidenceArtifact,
     GenerationAudit, GenerationRun, ImportVersion, LockedMachineSpec,
     MachineSpecRevision, ProgramArtifact, ProgramBranch, ProgramCommit,
     ProgramWorkspace, Project, ReviewConfirmation, SourceArtifact,
@@ -36,7 +40,8 @@ from .repository import (
     list_files, parent_of, read_file, repository_path, validate_branch_name, write_files,
 )
 from .schemas import (
-    AdapterDetectRequest, BranchCreateRequest, CellPatchRequest, CompileRunRequest,
+    AdapterDetectRequest, AutomatedReviewRequest, BranchCreateRequest,
+    CellPatchRequest, CompileRunRequest,
     ConfirmationRequest, GenerationRequest, SimulationRunRequest,
     ProgramCommitRequest, ProgramFilePatch, ProjectCreate, ProjectPatch,
     WarningAcceptRequest,
@@ -300,6 +305,36 @@ def audit_dict(item: GenerationAudit) -> dict[str, Any]:
     }
 
 
+def automated_review_dict(session: Session, item: AutomatedReviewRun) -> dict[str, Any]:
+    checks = json.loads(item.checks_json)
+    gates = json.loads(item.external_gates_json)
+    report_artifact = session.get(SourceArtifact, item.report_artifact_id)
+    return {
+        "id": item.id,
+        "project_id": item.project_id,
+        "generation_run_id": item.generation_run_id,
+        "program_commit_id": item.program_commit_id,
+        "review_version": item.review_version,
+        "input_hash": item.input_hash,
+        "status": item.status,
+        "verification_level": item.verification_level,
+        "repeat_count": item.repeat_count,
+        "checks": checks,
+        "summary": {
+            "total": len(checks),
+            "passed": sum(value.get("status") == "passed" for value in checks),
+            "failed": sum(value.get("status") == "failed" for value in checks),
+            "external_pending": len(gates),
+        },
+        "external_validation_gates": gates,
+        "claim_boundary": item.claim_boundary,
+        "report_artifact_id": item.report_artifact_id,
+        "report_sha256": report_artifact.sha256 if report_artifact else None,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
 def compile_dict(session: Session, item: CompileRun) -> dict[str, Any]:
     evidence_count = session.scalar(
         select(func.count()).select_from(EvidenceArtifact).where(EvidenceArtifact.compile_run_id == item.id)
@@ -419,6 +454,113 @@ def generation_baseline(
         warnings=json.loads(run.warnings_json),
     )
     return json.loads(spec_revision.data_json), bundle, commit, test_spec
+
+
+def persist_automated_review(
+    session: Session,
+    settings: Settings,
+    run: GenerationRun,
+    *,
+    repeat_count: int,
+) -> tuple[AutomatedReviewRun, bool]:
+    spec_data, bundle, baseline_commit, _test_spec = generation_baseline(
+        session, settings, run
+    )
+    try:
+        report = run_automated_review(
+            spec_data,
+            bundle,
+            run_generator_version=run.generator_version,
+            program_commit_id=baseline_commit.id,
+            program_git_sha=baseline_commit.git_sha,
+            repeat_count=repeat_count,
+        )
+    except (SimulationInputError, ValueError) as exc:
+        failure_input_hash = content_hash(
+            stable_json(
+                {
+                    "review_version": AUTOMATED_REVIEW_VERSION,
+                    "repeat_count": repeat_count,
+                    "generation_run_id": run.id,
+                    "program_commit_id": baseline_commit.id,
+                    "git_sha": baseline_commit.git_sha,
+                    "generator_version": run.generator_version,
+                    "failure": str(exc),
+                }
+            )
+        )
+        report = {
+            "review_version": AUTOMATED_REVIEW_VERSION,
+            "input_hash": failure_input_hash,
+            "status": "blocked",
+            "verification_level": "automatic",
+            "checks": [
+                {
+                    "id": "automated_review_execution",
+                    "title": "自动审核执行完整性",
+                    "status": "failed",
+                    "severity": "blocker",
+                    "detail": str(exc),
+                    "evidence": {"generation_run_id": run.id},
+                    "action": "保留当前生成基线，修复生成器或 TestSpec 后创建新基线",
+                }
+            ],
+            "external_validation_gates": list(EXTERNAL_VALIDATION_GATES),
+            "claim_boundary": "自动审核执行被阻断；该结果不代表厂商工具、真实 PLC 或电气工程师确认。",
+        }
+
+    existing = session.scalar(
+        select(AutomatedReviewRun).where(
+            AutomatedReviewRun.generation_run_id == run.id,
+            AutomatedReviewRun.review_version == report["review_version"],
+            AutomatedReviewRun.input_hash == report["input_hash"],
+        )
+    )
+    if existing is not None:
+        return existing, True
+
+    report_bytes = json.dumps(
+        report, ensure_ascii=False, sort_keys=True, indent=2
+    ).encode("utf-8")
+    stored = store_bytes(
+        session,
+        settings,
+        report_bytes,
+        f"automated-review-{run.id}-{report['input_hash'][:12]}.json",
+        "application/json",
+    )
+    item = AutomatedReviewRun(
+        project_id=run.project_id,
+        generation_run_id=run.id,
+        program_commit_id=baseline_commit.id,
+        review_version=report["review_version"],
+        input_hash=report["input_hash"],
+        status=report["status"],
+        verification_level=report["verification_level"],
+        repeat_count=repeat_count,
+        checks_json=json.dumps(report["checks"], ensure_ascii=False, sort_keys=True),
+        external_gates_json=json.dumps(
+            report["external_validation_gates"], ensure_ascii=False, sort_keys=True
+        ),
+        claim_boundary=report["claim_boundary"],
+        report_artifact_id=stored.record.id,
+    )
+    session.add(item)
+    session.flush()
+    audit(
+        session,
+        run.project_id,
+        "program.automated_review_completed",
+        "AutomatedReviewRun",
+        item.id,
+        {
+            "status": item.status,
+            "input_hash": item.input_hash,
+            "repeat_count": item.repeat_count,
+            "verification_level": item.verification_level,
+        },
+    )
+    return item, False
 
 
 def audit(session: Session, project_id: str, action: str, entity_type: str, entity_id: str, payload: dict[str, Any] | None = None) -> None:
@@ -593,6 +735,64 @@ def get_generation_audit(run_id: str, session: Session = Depends(app_session)) -
     return audit_dict(item)
 
 
+@router.post("/api/v1/projects/{project_id}/automated-reviews", status_code=201)
+def create_automated_review(
+    project_id: str,
+    payload: AutomatedReviewRequest,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    project = require_project(session, project_id)
+    run = session.get(GenerationRun, payload.generation_run_id)
+    if run is None or run.project_id != project.id:
+        raise api_error(
+            "GENERATION_RUN_NOT_FOUND",
+            "生成任务不存在或不属于当前项目",
+            404,
+        )
+    check_expected_revision(
+        run.revision, payload.expected_generation_revision, if_match
+    )
+    if run.status != "review_ready":
+        raise api_error(
+            "GENERATION_NOT_READY",
+            "生成任务尚未形成不可变审核基线",
+            409,
+            action="等待生成完成或创建新的生成任务",
+        )
+    item, reused = persist_automated_review(
+        session, runtime_settings, run, repeat_count=payload.repeat_count
+    )
+    session.commit()
+    result = automated_review_dict(session, item)
+    result["reused"] = reused
+    return result
+
+
+@router.get("/api/v1/automated-reviews/{review_id}")
+def get_automated_review(
+    review_id: str, session: Session = Depends(app_session)
+) -> dict[str, Any]:
+    item = session.get(AutomatedReviewRun, review_id)
+    if item is None:
+        raise api_error("AUTOMATED_REVIEW_NOT_FOUND", "自动审核报告不存在", 404)
+    return automated_review_dict(session, item)
+
+
+@router.get("/api/v1/projects/{project_id}/automated-reviews")
+def list_automated_reviews(
+    project_id: str, session: Session = Depends(app_session)
+) -> list[dict[str, Any]]:
+    require_project(session, project_id)
+    items = session.scalars(
+        select(AutomatedReviewRun)
+        .where(AutomatedReviewRun.project_id == project_id)
+        .order_by(AutomatedReviewRun.created_at.desc())
+    ).all()
+    return [automated_review_dict(session, item) for item in items]
+
+
 @router.post("/api/v1/projects/{project_id}/compile-runs", status_code=201)
 def create_compile_run(
     project_id: str,
@@ -609,13 +809,32 @@ def create_compile_run(
     if generation.status != "review_ready" or not generation.control_ir_revision_id:
         raise api_error("GENERATION_NOT_READY", "生成物尚未完成确定性生成与审计，不能创建编译准备任务", 409, action="先在 P07 运行生成物自审计并处理 blocker")
     _spec_data, _bundle, baseline_commit, _test_spec = generation_baseline(session, runtime_settings, generation)
-    latest_audit = session.scalar(select(GenerationAudit).where(GenerationAudit.generation_run_id == generation.id).order_by(GenerationAudit.created_at.desc()))
-    if latest_audit is None:
-        raise api_error("GENERATION_AUDIT_REQUIRED", "创建编译准备任务前必须先运行生成物自审计", 409, action="先运行生成物自审计")
-    if latest_audit.program_commit_id != baseline_commit.id:
-        raise api_error("GENERATION_AUDIT_STALE", "生成物审计不是当前不可变 Commit 的结果", 409, action="重新运行生成物自审计")
-    if latest_audit.status == "blocked":
-        raise api_error("GENERATION_AUDIT_BLOCKED", "生成物自审计存在 blocker，不能进入厂商编译准备", 409, action="修复工作分支后重新生成并审计")
+    latest_review = session.scalar(
+        select(AutomatedReviewRun)
+        .where(AutomatedReviewRun.generation_run_id == generation.id)
+        .order_by(AutomatedReviewRun.created_at.desc())
+    )
+    if latest_review is None:
+        raise api_error(
+            "AUTOMATED_REVIEW_REQUIRED",
+            "创建编译准备任务前必须完成项目自动审核",
+            409,
+            action="重新运行项目自动审核",
+        )
+    if latest_review.program_commit_id != baseline_commit.id:
+        raise api_error(
+            "AUTOMATED_REVIEW_STALE",
+            "自动审核不是当前不可变 Commit 的结果",
+            409,
+            action="基于当前生成任务重新运行自动审核",
+        )
+    if latest_review.status == "blocked":
+        raise api_error(
+            "AUTOMATED_REVIEW_BLOCKED",
+            "项目自动审核存在 blocker，不能进入厂商编译准备",
+            409,
+            action="保留当前基线，修复后创建新的生成任务",
+        )
     try:
         adapter = descriptor(payload.adapter_id)
     except KeyError:
@@ -1311,15 +1530,14 @@ def create_generation_run(
         branch.head_commit = sha
         branch.status = "clean"
         branch.revision += 1
-        session.add(
-            ProgramCommit(
-                branch_id=branch.id,
-                git_sha=sha,
-                message=f"Generate FX5U ST from MachineSpec {revision.sequence}",
-                machine_spec_revision_id=revision.id,
-                control_ir_revision_id=control_ir.id,
-            )
+        program_commit = ProgramCommit(
+            branch_id=branch.id,
+            git_sha=sha,
+            message=f"Generate FX5U ST from MachineSpec {revision.sequence}",
+            machine_spec_revision_id=revision.id,
+            control_ir_revision_id=control_ir.id,
         )
+        session.add(program_commit)
         run.status = "review_ready"
         run.revision += 1
         workspace.revision += 1
@@ -1330,6 +1548,10 @@ def create_generation_run(
             "GenerationRun",
             run.id,
             {"branch": branch_name, "generator_version": GENERATOR_VERSION, "git_sha": sha},
+        )
+        session.flush()
+        persist_automated_review(
+            session, runtime_settings, run, repeat_count=20
         )
         session.commit()
     except (RepositoryError, OSError, ValueError) as exc:

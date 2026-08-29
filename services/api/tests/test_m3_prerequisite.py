@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from kongpu_api.audit import audit_bundle
 from kongpu_api.adapters import CAPABILITIES, adapter
 from kongpu_api.generator import generate_bundle
+from kongpu_api.models import GenerationRun
 from kongpu_api.simulation import run_reference_simulation, run_test_spec, SimulationInputError
 
 
@@ -48,13 +50,16 @@ def test_adapter_contract_is_bounded_and_manual_by_default() -> None:
     assert reference.start_simulation("ignored") ["verification_level"] == "automatic_reference"
 
 
-def test_generation_audit_is_stable_and_compile_requires_audit(
+def test_generation_audit_is_stable_and_compile_uses_automatic_review(
     client: TestClient, project: dict, locked_example: dict
 ) -> None:
     run = _generated_run(client, project, locked_example)
-    before = client.post(f"/api/v1/projects/{project['id']}/compile-runs", json={"generation_run_id": run["id"], "adapter_id": "gxworks3", "expected_generation_revision": run["revision"]})
-    assert before.status_code == 409
-    assert before.json()["code"] == "GENERATION_AUDIT_REQUIRED"
+    automatic = client.get(
+        f"/api/v1/projects/{project['id']}/automated-reviews"
+    )
+    assert automatic.status_code == 200
+    assert automatic.json()[0]["generation_run_id"] == run["id"]
+    assert automatic.json()[0]["status"] == "passed"
 
     first = client.post(f"/api/v1/generation-runs/{run['id']}/audit")
     second = client.post(f"/api/v1/generation-runs/{run['id']}/audit")
@@ -66,6 +71,114 @@ def test_generation_audit_is_stable_and_compile_requires_audit(
     assert compile_run.status_code == 201, compile_run.text
     assert compile_run.json()["status"] == "manual_required"
     assert compile_run.json()["verification_level"] == "unverified"
+
+
+def test_automated_review_is_persisted_reused_and_downloadable(
+    client: TestClient, project: dict, locked_example: dict
+) -> None:
+    run = _generated_run(client, project, locked_example)
+    listed = client.get(f"/api/v1/projects/{project['id']}/automated-reviews")
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    automatic = listed.json()[0]
+    assert automatic["status"] == "passed"
+    assert automatic["verification_level"] == "automatic"
+    assert automatic["repeat_count"] == 20
+    assert automatic["summary"] == {
+        "total": 7,
+        "passed": 7,
+        "failed": 0,
+        "external_pending": 5,
+    }
+    assert {
+        gate["status"] for gate in automatic["external_validation_gates"]
+    } == {"pending_external"}
+    deterministic = next(
+        check
+        for check in automatic["checks"]
+        if check["id"] == "deterministic_generation"
+    )
+    assert deterministic["evidence"]["repeat_count"] == 20
+    assert deterministic["evidence"]["unique_hash_count"] == 1
+    mutations = next(
+        check
+        for check in automatic["checks"]
+        if check["id"] == "mutation_detection"
+    )
+    assert all(item["caught"] for item in mutations["evidence"]["mutations"])
+
+    downloaded = client.get(f"/api/v1/artifacts/{automatic['report_artifact_id']}")
+    assert downloaded.status_code == 200
+    assert hashlib.sha256(downloaded.content).hexdigest() == automatic["report_sha256"]
+    by_id = client.get(f"/api/v1/automated-reviews/{automatic['id']}")
+    assert by_id.status_code == 200
+    assert by_id.json()["input_hash"] == automatic["input_hash"]
+
+    repeated = client.post(
+        f"/api/v1/projects/{project['id']}/automated-reviews",
+        json={
+            "generation_run_id": run["id"],
+            "repeat_count": 20,
+            "expected_generation_revision": run["revision"],
+        },
+    )
+    assert repeated.status_code == 201, repeated.text
+    assert repeated.json()["id"] == automatic["id"]
+    assert repeated.json()["reused"] is True
+    assert repeated.json()["report_sha256"] == automatic["report_sha256"]
+
+
+def test_automated_review_validates_limits_revision_and_generator_version(
+    client: TestClient, project: dict, locked_example: dict
+) -> None:
+    run = _generated_run(client, project, locked_example)
+    for repeat_count in (1, 51):
+        invalid = client.post(
+            f"/api/v1/projects/{project['id']}/automated-reviews",
+            json={
+                "generation_run_id": run["id"],
+                "repeat_count": repeat_count,
+                "expected_generation_revision": run["revision"],
+            },
+        )
+        assert invalid.status_code == 422
+        assert invalid.json()["code"] == "REQUEST_VALIDATION_FAILED"
+
+    stale = client.post(
+        f"/api/v1/projects/{project['id']}/automated-reviews",
+        json={
+            "generation_run_id": run["id"],
+            "repeat_count": 2,
+            "expected_generation_revision": run["revision"] + 1,
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "REVISION_CONFLICT"
+
+    database = client.app.state.database
+    with database.session_factory() as session:
+        row = session.scalar(select(GenerationRun).where(GenerationRun.id == run["id"]))
+        assert row is not None
+        row.generator_version = "fx5u-st-v1"
+        session.commit()
+
+    blocked = client.post(
+        f"/api/v1/projects/{project['id']}/automated-reviews",
+        json={
+            "generation_run_id": run["id"],
+            "repeat_count": 2,
+            "expected_generation_revision": run["revision"],
+        },
+    )
+    assert blocked.status_code == 201, blocked.text
+    assert blocked.json()["status"] == "blocked"
+    deterministic = next(
+        check
+        for check in blocked.json()["checks"]
+        if check["id"] == "deterministic_generation"
+    )
+    assert deterministic["status"] == "failed"
+    assert deterministic["evidence"]["run_generator_version"] == "fx5u-st-v1"
 
 
 def test_audit_detects_undefined_reference_and_forbidden_operation(locked_example: dict) -> None:
@@ -131,6 +244,14 @@ def test_restricted_test_spec_reports_cases_and_rejects_unknown_fields() -> None
         pass
     else:
         raise AssertionError("TestSpec must reject arbitrary fields")
+
+
+def test_generated_testspec_uses_deterministic_inputs(locked_example: dict) -> None:
+    bundle = generate_bundle(locked_example["revision"]["data"])
+    result = run_test_spec(bundle.control_ir, bundle.test_spec, {}, 20)
+    assert result["status"] == "passed"
+    assert result["test_summary"]["failed"] == 0
+    assert result["test_summary"]["blocked"] == 0
 
 
 def test_reference_simulation_api_trace_and_evidence_immutability(

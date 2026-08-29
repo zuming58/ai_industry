@@ -286,6 +286,38 @@ class GenerationAudit(Base, TimestampMixin):
     report_artifact_id: Mapped[str | None] = mapped_column(ForeignKey("source_artifacts.id"))
 
 
+class AutomatedReviewRun(Base, TimestampMixin):
+    __tablename__ = "automated_review_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_run_id",
+            "review_version",
+            "input_hash",
+            name="uq_automated_review_input",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    generation_run_id: Mapped[str] = mapped_column(
+        ForeignKey("generation_runs.id", ondelete="CASCADE"), index=True
+    )
+    program_commit_id: Mapped[str] = mapped_column(
+        ForeignKey("program_commits.id"), index=True
+    )
+    review_version: Mapped[str] = mapped_column(String(24))
+    input_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    verification_level: Mapped[str] = mapped_column(String(40), default="automatic")
+    repeat_count: Mapped[int] = mapped_column(Integer, default=20)
+    checks_json: Mapped[str] = mapped_column(Text, default="[]")
+    external_gates_json: Mapped[str] = mapped_column(Text, default="[]")
+    claim_boundary: Mapped[str] = mapped_column(Text)
+    report_artifact_id: Mapped[str] = mapped_column(ForeignKey("source_artifacts.id"))
+
+
 class CompileRun(Base, TimestampMixin):
     __tablename__ = "compile_runs"
 

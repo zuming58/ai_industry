@@ -19,6 +19,12 @@ def test_deterministic_generator(locked_example: dict) -> None:
     assert first.files == second.files
     assert first.control_ir == second.control_ir
     assert first.test_spec == second.test_spec
+    traced = {(item["entity_type"], item["entity_id"]) for item in first.trace_links}
+    spec = locked_example["revision"]["data"]
+    assert {("component", item["component_id"]) for item in spec["components"]} <= traced
+    assert {("interlock", item["interlock_id"]) for item in spec["interlocks"]} <= traced
+    assert {("exception", item["exception_id"]) for item in spec["exceptions"]} <= traced
+    assert {("test_case", f"TEST_{item['step_id']}") for item in spec["sequence"]} <= traced
 
 
 def test_generation_edit_commit_and_diff(

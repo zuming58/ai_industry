@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-GENERATOR_VERSION = "fx5u-st-v1"
+GENERATOR_VERSION = "fx5u-st-v2"
 
 
 def stable_json(value: Any) -> str:
@@ -39,6 +39,33 @@ def _translate_expression(expression: str | None, signals: dict[str, str]) -> st
     for signal_id in sorted(signals, key=len, reverse=True):
         result = re.sub(rf"\b{re.escape(signal_id)}\b", signals[signal_id], result)
     return result.replace(":=", "=")
+
+
+def _satisfying_inputs(expression: str | None) -> dict[str, bool | int | float]:
+    """Create a deterministic, conservative fixture for simple generated conditions."""
+    text = str(expression or "TRUE")
+    values: dict[str, bool | int | float] = {}
+    comparisons = re.findall(
+        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*(>=|<=|>|<|=)\s*([-+]?\d+(?:\.\d+)?)",
+        text,
+    )
+    for name, operator, raw in comparisons:
+        number: int | float = float(raw) if "." in raw else int(raw)
+        if operator == ">":
+            number = number + 1
+        elif operator == "<":
+            number = number - 1
+        values[name] = number
+    excluded = {name for name, _operator, _raw in comparisons}
+    for name in re.findall(r"\bNOT\s+([A-Za-z_][A-Za-z0-9_]*)\b", text, flags=re.I):
+        if name.upper() not in {"TRUE", "FALSE"}:
+            values[name] = False
+            excluded.add(name)
+    for name in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", text):
+        if name.upper() in {"TRUE", "FALSE", "AND", "OR", "NOT"} or name in excluded:
+            continue
+        values.setdefault(name, True)
+    return values
 
 
 @dataclass(frozen=True)
@@ -161,6 +188,10 @@ def _build_test_spec(ir: dict[str, Any]) -> dict[str, Any]:
             {
                 "id": f"TEST_{step['id']}",
                 "source_step_id": step["id"],
+                "inputs": {
+                    **_satisfying_inputs(step["entry_condition"]),
+                    **_satisfying_inputs(step["completion_condition"]),
+                },
                 "given": step["entry_condition"],
                 "when": step["actions"],
                 "expect": step["completion_condition"],
@@ -171,8 +202,10 @@ def _build_test_spec(ir: dict[str, Any]) -> dict[str, Any]:
             {
                 "id": f"TEST_{exception['exception_id']}",
                 "source_exception_id": exception["exception_id"],
+                "inputs": _satisfying_inputs(exception.get("condition")),
                 "given": exception.get("condition"),
-                "expect": exception.get("response"),
+                "when": "",
+                "expect": exception.get("condition"),
             }
         )
     return {"version": "1.0", "target": ir["target"], "tests": tests}
@@ -192,11 +225,63 @@ def generate_bundle(spec: dict[str, Any]) -> GeneratedBundle:
                     "message": f"{exception['exception_id']} 未填写操作员消息，已保留 TODO。",
                 }
             )
+    control_ir_text = json.dumps(ir, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    test_spec_text = json.dumps(test_spec, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     files = {
         "src/GVL_IO.st": gvl,
         "src/PRG_AutoCycle.st": program,
-        "generated/ControlIR.json": json.dumps(ir, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-        "tests/TestSpec.json": json.dumps(test_spec, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        "generated/ControlIR.json": control_ir_text,
+        "tests/TestSpec.json": test_spec_text,
         "README.md": "# 控谱生成工作区\n\n目标：三菱 FX5U / Structured Text。\n\n本目录未经过 GX Works3 编译验证，禁止直接用于真实 PLC 下载。\n",
     }
-    return GeneratedBundle(ir, files, test_spec, signal_traces + step_traces, warnings)
+    json_lines = control_ir_text.splitlines()
+    test_lines = test_spec_text.splitlines()
+
+    def line_of(lines: list[str], value: str) -> int | None:
+        token = json.dumps(value, ensure_ascii=False)
+        return next((index for index, line in enumerate(lines, start=1) if token in line), None)
+
+    object_traces: list[dict[str, Any]] = []
+    for entity_type, id_key, values in (
+        ("component", "component_id", ir["components"]),
+        ("interlock", "interlock_id", ir["interlocks"]),
+        ("exception", "exception_id", ir["exceptions"]),
+    ):
+        for item in values:
+            entity_id = str(item.get(id_key))
+            source = item.get("source") or {}
+            object_traces.append(
+                {
+                    "output_path": "generated/ControlIR.json",
+                    "output_symbol": entity_id,
+                    "output_line": line_of(json_lines, entity_id),
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "source_sheet": source.get("sheet"),
+                    "source_row": source.get("row"),
+                }
+            )
+    step_sources = {str(item.get("id")): item.get("source") or {} for item in ir["steps"]}
+    exception_sources = {str(item.get("exception_id")): item.get("source") or {} for item in ir["exceptions"]}
+    test_traces: list[dict[str, Any]] = []
+    for test in test_spec["tests"]:
+        source = step_sources.get(str(test.get("source_step_id"))) or exception_sources.get(str(test.get("source_exception_id"))) or {}
+        test_id = str(test["id"])
+        test_traces.append(
+            {
+                "output_path": "tests/TestSpec.json",
+                "output_symbol": test_id,
+                "output_line": line_of(test_lines, test_id),
+                "entity_type": "test_case",
+                "entity_id": test_id,
+                "source_sheet": source.get("sheet"),
+                "source_row": source.get("row"),
+            }
+        )
+    return GeneratedBundle(
+        ir,
+        files,
+        test_spec,
+        signal_traces + step_traces + object_traces + test_traces,
+        warnings,
+    )

@@ -21,6 +21,7 @@ def _safe_eval(expression: str | None, values: dict[str, Any]) -> bool:
     text = re.sub(r"\bAND\b", " and ", text, flags=re.I)
     text = re.sub(r"\bOR\b", " or ", text, flags=re.I)
     text = re.sub(r"\bNOT\b", " not ", text, flags=re.I)
+    text = text.strip()
     try:
         tree = ast.parse(text, mode="eval")
     except SyntaxError:
@@ -118,7 +119,7 @@ def run_test_spec(
 
     steps = {str(item.get("id")): item for item in ir.get("steps", [])}
     exceptions = {str(item.get("exception_id")): item for item in ir.get("exceptions", [])}
-    allowed = {"id", "source_step_id", "source_exception_id", "given", "when", "expect"}
+    allowed = {"id", "source_step_id", "source_exception_id", "inputs", "given", "when", "expect"}
     seen: set[str] = set()
     case_results: list[dict[str, Any]] = []
     for raw_case in tests:
@@ -129,6 +130,15 @@ def run_test_spec(
             raise SimulationInputError("TestSpec 用例 ID 缺失或重复")
         seen.add(case_id)
         values = dict(signals)
+        case_inputs = raw_case.get("inputs") or {}
+        if not isinstance(case_inputs, dict):
+            raise SimulationInputError("TestSpec inputs 必须是对象")
+        for key, value in case_inputs.items():
+            if key not in values:
+                raise SimulationInputError(f"TestSpec 使用未知输入: {key}")
+            if not isinstance(value, (bool, int, float)):
+                raise SimulationInputError(f"TestSpec 输入 {key} 必须是布尔或数字")
+            values[key] = value
         given = _safe_eval(str(raw_case.get("given") or "TRUE"), values)
         changes = _apply_actions(str(raw_case.get("when") or ""), values)
         expected = _safe_eval(str(raw_case.get("expect") or "TRUE"), values)
@@ -147,7 +157,11 @@ def run_test_spec(
             "source": source_object.get("source"),
         })
 
-    sequence_result = run_reference_simulation(ir, input_overrides, max_cycles)
+    sequence_inputs = dict(input_overrides or {})
+    for raw_case in tests:
+        for key, value in (raw_case.get("inputs") or {}).items():
+            sequence_inputs.setdefault(key, value)
+    sequence_result = run_reference_simulation(ir, sequence_inputs, max_cycles)
     passed_cases = sum(item["status"] == "passed" for item in case_results)
     failed_cases = sum(item["status"] == "failed" for item in case_results)
     blocked_cases = sum(item["status"] == "blocked" for item in case_results)
