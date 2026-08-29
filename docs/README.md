@@ -7,7 +7,7 @@
 - [Development Roadmap](DEVELOPMENT_ROADMAP.md)：可点击 Demo 到真实 Adapter、模拟器和在线监控的开发顺序。
 - [MachineSpec Template Draft](MACHINE_SPEC_TEMPLATE_DRAFT.md)：Excel 工程模板的初始结构和待共同确认事项。
 - [PRD Registry](PRD_REGISTRY.md)：项目 PRD 台账。
-- [Current Status](CURRENT_STATUS.md)：M1/M2/M3 前置的真实实现、验证等级和未决边界。
+- [Current Status](CURRENT_STATUS.md)：M1/M2/M3 前置的真实实现、项目自动审核、验证等级和未决边界。
 - [Local Development](LOCAL_DEVELOPMENT.md)：安装、启动、测试、备份与恢复。
 - [API and Schema](API_AND_SCHEMA.md)：公开 API、MachineSpec v1 与并发契约。
 - [Open Source Audit](OPEN_SOURCE_AUDIT.md)：官方资料、开源许可证、维护状态和复用边界。

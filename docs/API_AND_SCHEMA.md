@@ -48,6 +48,8 @@
 | 只读环境检测 | POST /api/v1/adapters/detect |
 | 项目环境快照 | GET /api/v1/projects/{project_id}/adapter-environments |
 | 生成物审计 | POST/GET /api/v1/generation-runs/{run_id}/audit |
+| 项目自动审核 | POST/GET /api/v1/projects/{project_id}/automated-reviews |
+| 自动审核详情 | GET /api/v1/automated-reviews/{review_id} |
 | 编译准备 | POST/GET /api/v1/projects/{project_id}/compile-runs、GET /api/v1/compile-runs/{run_id} |
 | 外部证据 | POST /api/v1/compile-runs/{run_id}/evidence |
 | 参考模拟 | POST/GET /api/v1/projects/{project_id}/simulation-runs、GET /api/v1/simulation-runs/{run_id} |
@@ -57,7 +59,11 @@ Adapter v1 能力固定为 detect_environment、get_capabilities、prepare_works
 
 生成物审计绑定生成任务创建时的不可变 ProgramCommit，并再次核验 Control IR、TestSpec、ProgramArtifact 与锁定 MachineSpec 的内容哈希。审计报告按 audit_version + Commit 固定，重复请求复用同一结果；发现包含严重级别、文件/行号、稳定对象 ID、Excel 来源和恢复动作。
 
-编译准备状态为 manual_required，前置条件是生成任务处于 review_ready、审计存在且无 blocker。证据上传携带 expected_revision，原件按 SHA-256 去重保存，任何证据均保持 manual_unverified。
+项目自动审核在生成 Commit 和内容寻址工件落库后自动触发，默认 repeat_count=20。报告固定包含不可变基线、重复生成、来源追溯、静态审计、参考执行器、变异检测和安全边界七项检查，以及五项 pending_external 外部验证门。POST 请求包含 generation_run_id、repeat_count（2–50）和 expected_generation_revision，并接受 If-Match；过期版本返回 409。
+
+AutomatedReviewRun 以 generation_run_id、review_version 和 input_hash 唯一标识。相同不可变输入复用原报告和 SHA-256 工件，不覆盖历史；生成器版本、重复次数或基线变化会产生不同 input_hash。状态只有 passed 或 blocked，验证等级固定为 automatic。blocked 报告会保留当前生成基线并给出恢复动作，但禁止进入编译准备。
+
+编译准备状态为 manual_required，前置条件是生成任务处于 review_ready、当前不可变 Commit 的项目自动审核存在且状态为 passed。证据上传携带 expected_revision，原件按 SHA-256 去重保存，任何证据均保持 manual_unverified。
 
 参考模拟状态为 review_ready 或 failed，使用版本化 TestSpec DSL（当前 1.0）和受限表达式/赋值语法；不执行任意 Python、ST、Shell 或外部进程。结果绑定 ProgramCommit、TestSpecRevision、Control IR 和引擎版本，并保存不可变周期 Trace 工件。
 
@@ -93,5 +99,6 @@ Excel 工作表：
 - automatic_reference：仅指控谱参考逻辑模拟的自动结果；不等同于 GX Simulator3。
 - unverified：厂商 Adapter、编译准备和环境能力尚未由真实工具验证。
 - manual_unverified：外部日志、截图和报告已导入但没有集中验证签名。
+- automatic：仅指项目级确定性代码审核已运行并满足其检查范围；不包含厂商工具、真实 PLC 或电气工程师确认。
 - 本机未安装或未配置 GX Works3、GX Simulator3、MX Component 时，API 返回 unavailable 或 manual_required，不猜测版本、不执行任意命令。
 - 详见 Adapter 安全与依赖矩阵文档。
