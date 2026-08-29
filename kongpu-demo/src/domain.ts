@@ -113,4 +113,88 @@ export type GenerationRun = {
   updated_at: string;
 };
 
+export type AdapterDescriptor = {
+  adapter_id: string;
+  name: string;
+  version: string;
+  vendor: string;
+  capabilities: Record<string, string>;
+  verification_level: string;
+};
+
+export type AdapterEnvironment = {
+  id: string;
+  project_id: string;
+  adapter_id: string;
+  adapter_version: string;
+  status: string;
+  verification_level: string;
+  fingerprint: string;
+  details: Record<string, unknown>;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AuditFinding = {
+  code: string;
+  severity: string;
+  title: string;
+  detail: string;
+  file?: string | null;
+  line?: number | null;
+  entity_id?: string | null;
+  source?: Record<string, unknown> | null;
+  action: string;
+};
+
+export type GenerationAudit = {
+  id: string;
+  generation_run_id: string;
+  audit_version: string;
+  input_hash: string;
+  program_commit_id?: string | null;
+  baseline_scope?: string;
+  status: string;
+  findings: AuditFinding[];
+  summary: { total: number; blocker: number; warning: number };
+  report_artifact_id?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CompileRun = {
+  id: string;
+  project_id: string;
+  generation_run_id: string;
+  program_commit_id?: string | null;
+  adapter_id: string;
+  adapter_environment_id?: string | null;
+  status: string;
+  verification_level: string;
+  diagnostics: Array<Record<string, unknown>>;
+  failure_reason?: string | null;
+  revision: number;
+  evidence_count?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SimulationRun = {
+  id: string;
+  project_id: string;
+  generation_run_id: string;
+  program_commit_id?: string | null;
+  test_spec_revision_id?: string | null;
+  engine_version: string;
+  status: string;
+  verification_level: string;
+  results: Record<string, unknown>;
+  trace_artifact_id?: string | null;
+  revision: number;
+  trace_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ApiError = { code?: string; message?: string; action?: string; location?: unknown };

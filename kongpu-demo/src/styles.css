@@ -761,10 +761,66 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
 .document-row-real code { color: var(--ink-500); font-size: 8px; }
 .toast--error { color: #fff1f2; background: #653238; border-color: rgba(255,157,168,.35); }
 
+/* M3 prerequisite verification workbenches */
+.verification-toolbar { min-height: 62px; padding: 9px 12px; display: grid; grid-template-columns: minmax(220px,1.25fr) minmax(200px,1fr) auto; align-items: end; gap: 10px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-sm); }
+.verification-toolbar label, .project-select { min-width: 0; display: flex; flex-direction: column; gap: 5px; color: var(--ink-500); font-size: 8px; font-weight: 650; }
+.verification-toolbar select, .verification-toolbar input, .project-select select { width: 100%; height: 34px; padding: 0 9px; color: var(--ink-900); background: #fff; border: 1px solid var(--line-strong); border-radius: 6px; font-size: 9px; }
+.verification-toolbar--simulation { grid-template-columns: minmax(190px,1.1fr) 130px minmax(230px,1.2fr) auto; }
+.verification-toolbar .override-field input { font-family: Consolas, monospace; }
+.verification-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 310px; gap: 12px; }
+.verification-panel, .compile-prep, .simulation-stage-real, .assertion-panel-real { min-width: 0; min-height: 0; overflow: auto; }
+.audit-summary, .simulation-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-bottom: 1px solid var(--line); }
+.audit-summary .stat, .simulation-metrics .stat { min-height: 82px; border-right: 1px solid var(--line); border-radius: 0; box-shadow: none; }
+.audit-summary .stat:last-child, .simulation-metrics .stat:last-child { border-right: 0; }
+.finding-list article { min-height: 70px; padding: 11px 13px; display: grid; grid-template-columns: 22px minmax(0,1fr) auto; align-items: start; gap: 9px; border-bottom: 1px solid #edf1f5; }
+.finding-list article > span { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.finding-list strong { color: var(--ink-900); font-size: 10px; }
+.finding-list small { color: var(--blue-600); font-family: Consolas, monospace; font-size: 7px; }
+.finding-list p { margin: 0; color: var(--ink-500); font-size: 8px; line-height: 1.5; }
+.compile-prep { padding-bottom: 14px; }
+.compile-prep > .button { width: calc(100% - 28px); margin: 12px 14px 0; }
+.boundary-card { margin: 13px 14px 0; padding: 11px; display: flex; align-items: flex-start; gap: 9px; color: #80602c; background: #fff8ea; border: 1px solid #ead8b1; border-radius: 7px; }
+.boundary-card svg { flex: 0 0 auto; color: #b77718; }
+.boundary-card span { font-size: 8px; line-height: 1.5; }
+.boundary-card strong { display: block; color: #76501c; font-size: 9px; }
+.compile-record { margin: 12px 14px 0; padding: 12px; background: #f7fafc; border: 1px solid var(--line); border-radius: 7px; }
+.compile-record dl, .assertion-panel-real dl, .adapter-card-real dl { display: grid; grid-template-columns: 90px minmax(0,1fr); gap: 7px 9px; color: var(--ink-500); font-size: 8px; }
+.compile-record dd, .assertion-panel-real dd, .adapter-card-real dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--ink-900); font-family: Consolas, monospace; }
+.compile-record p { color: var(--ink-700); font-size: 8px; line-height: 1.5; }
+.compile-record .button { width: 100%; margin-top: 8px; }
+.compile-record > small { display: block; margin-top: 8px; color: var(--ink-500); font-size: 7px; line-height: 1.5; }
+.simulation-workbench { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 310px; gap: 12px; }
+.reference-banner { margin: 12px 14px; padding: 10px 12px; display: flex; align-items: flex-start; gap: 8px; color: #326d59; background: #eff8f5; border: 1px solid #cfe7de; border-radius: 7px; }
+.reference-banner span { font-size: 8px; line-height: 1.5; }
+.reference-banner strong { display: block; color: #246148; font-size: 9px; }
+.trace-stream { margin: 12px 14px 14px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; }
+.trace-stream article { min-height: 48px; padding: 7px 10px; display: grid; grid-template-columns: 28px minmax(100px,.55fr) minmax(180px,1fr); align-items: center; gap: 9px; border-bottom: 1px solid #edf1f5; }
+.trace-stream article:last-child { border-bottom: 0; }
+.trace-stream b { width: 25px; height: 25px; display: grid; place-items: center; color: #fff; background: var(--blue-600); border-radius: 5px; font-family: Consolas, monospace; font-size: 7px; }
+.trace-stream span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.trace-stream strong { color: var(--ink-900); font-size: 9px; }
+.trace-stream small, .trace-stream code { overflow: hidden; color: var(--ink-500); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.assertion-panel-real { padding-bottom: 14px; }
+.assertion-panel-real > dl, .assertion-panel-real > p { margin: 14px; color: var(--ink-500); font-size: 8px; line-height: 1.5; }
+.assertion-panel-real code { overflow-wrap: anywhere; white-space: normal; }
+.project-select { min-width: 240px; }
+.settings-grid-real { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.adapter-card-real { min-width: 0; padding: 15px; }
+.adapter-card-real__head { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center; gap: 9px; color: var(--blue-600); }
+.adapter-card-real__head > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.adapter-card-real__head strong { color: var(--ink-900); font-size: 11px; }
+.adapter-card-real__head small { color: var(--ink-500); font-size: 8px; }
+.capability-matrix { margin: 12px 0; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 5px; }
+.capability-matrix span { min-width: 0; min-height: 30px; padding: 5px 7px; display: flex; align-items: center; justify-content: space-between; gap: 7px; background: #f7fafc; border: 1px solid #e7edf3; border-radius: 5px; }
+.capability-matrix code { overflow: hidden; color: var(--ink-700); font-size: 7px; text-overflow: ellipsis; }
+.capability-matrix b { color: var(--blue-600); font-size: 7px; font-weight: 650; }
+
 @media (max-width: 1400px) {
   .import-layout { grid-template-columns: 260px minmax(330px,.8fr) minmax(360px,1.1fr); }
   .program-layout { grid-template-columns: 200px minmax(430px,1fr) 235px; }
   .version-layout { grid-template-columns: 230px 270px minmax(0,1fr); }
+  .verification-grid, .simulation-workbench { grid-template-columns: minmax(0,1fr) 275px; }
+  .verification-toolbar--simulation { grid-template-columns: minmax(170px,1fr) 115px minmax(190px,1fr) auto; }
 }
 
 @media (max-height: 820px) {
@@ -773,4 +829,6 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
   .workflow-nav { min-height: 42px; }
   .workflow-nav a { min-height: 30px; }
   .code-editor { min-height: 360px; }
+  .finding-list article { min-height: 58px; padding-block: 8px; }
+  .trace-stream { max-height: 260px; overflow: auto; }
 }

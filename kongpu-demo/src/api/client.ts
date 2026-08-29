@@ -2,6 +2,10 @@ import createClient from "openapi-fetch";
 import type { paths } from "./schema";
 import type {
   ApiError,
+  AdapterDescriptor,
+  AdapterEnvironment,
+  CompileRun,
+  GenerationAudit,
   GenerationRun,
   ImportVersion,
   ProgramBranch,
@@ -9,6 +13,7 @@ import type {
   ProgramFile,
   Project,
   SpecRevision,
+  SimulationRun,
 } from "../domain";
 
 export const apiClient = createClient<paths>({ baseUrl: "" });
@@ -16,6 +21,14 @@ export const apiClient = createClient<paths>({ baseUrl: "" });
 function fileBodySerializer(body: { file: File }) {
   const form = new FormData();
   form.append("file", body.file);
+  return form;
+}
+
+function evidenceBodySerializer(body: { file: File; evidence_kind: string; expected_revision?: number }) {
+  const form = new FormData();
+  form.append("file", body.file);
+  form.append("evidence_kind", body.evidence_kind);
+  if (body.expected_revision !== undefined) form.append("expected_revision", String(body.expected_revision));
   return form;
 }
 
@@ -126,6 +139,43 @@ export const api = {
   },
   async commitDiff(commitId: string): Promise<{ commit: ProgramCommit; diff: string }> {
     return ensure(await apiClient.GET("/api/v1/commits/{commit_id}/diff", { params: { path: { commit_id: commitId } } }));
+  },
+  async listAdapters(): Promise<AdapterDescriptor[]> {
+    return ensure(await apiClient.GET("/api/v1/adapters"));
+  },
+  async detectAdapter(adapterId: string, projectId?: string): Promise<Record<string, unknown>> {
+    return ensure(await apiClient.POST("/api/v1/adapters/detect", { body: { adapter_id: adapterId, project_id: projectId } }));
+  },
+  async listAdapterEnvironments(projectId: string): Promise<AdapterEnvironment[]> {
+    return ensure(await apiClient.GET("/api/v1/projects/{project_id}/adapter-environments", { params: { path: { project_id: projectId } } }));
+  },
+  async auditGeneration(runId: string): Promise<GenerationAudit> {
+    return ensure(await apiClient.POST("/api/v1/generation-runs/{run_id}/audit", { params: { path: { run_id: runId } } }));
+  },
+  async getAudit(runId: string): Promise<GenerationAudit> {
+    return ensure(await apiClient.GET("/api/v1/generation-runs/{run_id}/audit", { params: { path: { run_id: runId } } }));
+  },
+  async listCompileRuns(projectId: string): Promise<CompileRun[]> {
+    return ensure(await apiClient.GET("/api/v1/projects/{project_id}/compile-runs", { params: { path: { project_id: projectId } } }));
+  },
+  async createCompileRun(projectId: string, generationRunId: string, adapterId: string, expectedGenerationRevision: number): Promise<CompileRun> {
+    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/compile-runs", { params: { path: { project_id: projectId } }, body: { generation_run_id: generationRunId, adapter_id: adapterId, expected_generation_revision: expectedGenerationRevision } }));
+  },
+  async uploadCompileEvidence(runId: string, file: File, evidenceKind = "vendor_report", expectedRevision?: number): Promise<{ id: string; source_artifact_id: string; sha256: string; evidence_kind: string; verification_level: string; compile_run: CompileRun }> {
+    return ensure(await apiClient.POST("/api/v1/compile-runs/{run_id}/evidence", {
+      params: { path: { run_id: runId } },
+      body: { file, evidence_kind: evidenceKind, expected_revision: expectedRevision } as never,
+      bodySerializer: evidenceBodySerializer as never,
+    }));
+  },
+  async listSimulationRuns(projectId: string): Promise<SimulationRun[]> {
+    return ensure(await apiClient.GET("/api/v1/projects/{project_id}/simulation-runs", { params: { path: { project_id: projectId } } }));
+  },
+  async createSimulationRun(projectId: string, generationRunId: string, inputOverrides: Record<string, boolean | number>, maxCycles: number, expectedGenerationRevision: number): Promise<SimulationRun> {
+    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/simulation-runs", { params: { path: { project_id: projectId } }, body: { generation_run_id: generationRunId, input_overrides: inputOverrides, max_cycles: maxCycles, expected_generation_revision: expectedGenerationRevision } }));
+  },
+  async getSimulationTrace(runId: string): Promise<{ simulation_run_id: string; engine_version: string; verification_level: string; traces: Array<Record<string, unknown>> }> {
+    return ensure(await apiClient.GET("/api/v1/simulation-runs/{run_id}/trace", { params: { path: { run_id: runId } } }));
   },
 };
 

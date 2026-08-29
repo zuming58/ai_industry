@@ -80,6 +80,36 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText("程序修改已提交到本地 Git 历史")).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
+  await page.getByRole("link", { name: "P07 编译" }).click();
+  await expect(page.getByRole("heading", { name: "生成物审计与编译准备" })).toBeVisible();
+  await page.getByRole("button", { name: "运行自审计" }).click();
+  await expect(page.getByText("生成物自审计已完成")).toBeVisible();
+  await expect(page.getByText(/Audit v1:/)).toBeVisible();
+  await page.getByRole("button", { name: "创建编译准备任务" }).click();
+  await expect(page.getByText("已创建厂商编译准备任务，当前仍为未验证")).toBeVisible();
+  await expect(page.getByText("manual_required")).toBeVisible();
+  await page.locator('.compile-prep input[type="file"]').setInputFiles({
+    name: "gxworks3-manual.log",
+    mimeType: "text/plain",
+    buffer: Buffer.from("GX Works3 evidence placeholder; no vendor pass claim."),
+  });
+  await expect(page.getByText("外部证据已按哈希保存，验证等级保持 manual_unverified")).toBeVisible();
+  await expect(page.getByText("证据数").locator("..")).toContainText("1");
+  await page.reload();
+  await expect(page.getByText("manual_required")).toBeVisible();
+  await expect(page.getByText("证据数").locator("..")).toContainText("1");
+  await expectNoHorizontalOverflow(page);
+
+  await page.getByRole("link", { name: "P08 模拟" }).click();
+  await expect(page.getByRole("heading", { name: "控谱参考逻辑模拟" })).toBeVisible();
+  await page.getByRole("button", { name: "运行参考模拟" }).click();
+  await expect(page.getByText("控谱参考逻辑模拟已完成；不等同于 GX Simulator3")).toBeVisible();
+  await expect(page.getByText(/TestSpec 用例：/)).toBeVisible();
+  await expect(page.getByRole("definition").filter({ hasText: "automatic_reference" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText(/TestSpec 用例：/)).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
   await page.getByRole("link", { name: "P11 版本" }).click();
   await page.getByRole("button", { name: /E2E review generated program/ }).click();
   await expect(page.locator(".diff-panel")).toContainText("E2E reviewed change");
@@ -88,11 +118,19 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 768 });
   const projectUrl = new URL(page.url());
   const projectId = projectUrl.pathname.split("/")[2];
-  for (const route of ["templates", "imports", "review", "program", "versions"]) {
+  for (const route of ["templates", "imports", "review", "program", "compile", "simulation", "versions"]) {
     await page.goto(`/projects/${projectId}/${route}`);
     await expect(page.locator("main")).toBeVisible();
     await expectNoHorizontalOverflow(page);
   }
+
+  await page.goto("/settings");
+  const gxWorksCard = page.locator(".adapter-card-real").filter({ hasText: "MELSOFT GX Works3" });
+  await gxWorksCard.getByRole("button", { name: "只读检测环境" }).click();
+  await expect(page.getByText("环境快照已更新；检测过程未启动厂商程序")).toBeVisible();
+  await expect(gxWorksCard).toContainText(/unavailable|manual_required/);
+  await expect(gxWorksCard).toContainText("unverified");
+  await expectNoHorizontalOverflow(page);
 });
 
 test("unsupported workbook is rejected with a recoverable error", async ({ page, request }) => {
