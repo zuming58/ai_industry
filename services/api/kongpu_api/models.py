@@ -255,3 +255,88 @@ class ProgramCommit(Base):
     machine_spec_revision_id: Mapped[str | None] = mapped_column(ForeignKey("machine_spec_revisions.id"))
     control_ir_revision_id: Mapped[str | None] = mapped_column(ForeignKey("control_ir_revisions.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class AdapterEnvironment(Base, TimestampMixin):
+    __tablename__ = "adapter_environments"
+    __table_args__ = (UniqueConstraint("project_id", "adapter_id", "fingerprint", name="uq_adapter_environment_fingerprint"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    adapter_id: Mapped[str] = mapped_column(String(80), index=True)
+    adapter_version: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32), default="unavailable")
+    verification_level: Mapped[str] = mapped_column(String(40), default="unverified")
+    fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class GenerationAudit(Base, TimestampMixin):
+    __tablename__ = "generation_audits"
+    __table_args__ = (UniqueConstraint("generation_run_id", "audit_version", name="uq_generation_audit_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    generation_run_id: Mapped[str] = mapped_column(ForeignKey("generation_runs.id", ondelete="CASCADE"), index=True)
+    program_commit_id: Mapped[str | None] = mapped_column(ForeignKey("program_commits.id"), index=True)
+    audit_version: Mapped[str] = mapped_column(String(24), default="1")
+    input_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="review_ready")
+    findings_json: Mapped[str] = mapped_column(Text, default="[]")
+    report_artifact_id: Mapped[str | None] = mapped_column(ForeignKey("source_artifacts.id"))
+
+
+class CompileRun(Base, TimestampMixin):
+    __tablename__ = "compile_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    generation_run_id: Mapped[str] = mapped_column(ForeignKey("generation_runs.id"), index=True)
+    program_commit_id: Mapped[str | None] = mapped_column(ForeignKey("program_commits.id"), index=True)
+    adapter_id: Mapped[str] = mapped_column(String(80), default="gxworks3")
+    adapter_environment_id: Mapped[str | None] = mapped_column(ForeignKey("adapter_environments.id"))
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    verification_level: Mapped[str] = mapped_column(String(40), default="unverified")
+    diagnostics_json: Mapped[str] = mapped_column(Text, default="[]")
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class EvidenceArtifact(Base, TimestampMixin):
+    __tablename__ = "evidence_artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    compile_run_id: Mapped[str | None] = mapped_column(ForeignKey("compile_runs.id", ondelete="CASCADE"), index=True)
+    simulation_run_id: Mapped[str | None] = mapped_column(ForeignKey("simulation_runs.id", ondelete="CASCADE"), index=True)
+    source_artifact_id: Mapped[str] = mapped_column(ForeignKey("source_artifacts.id"))
+    evidence_kind: Mapped[str] = mapped_column(String(40))
+    verification_level: Mapped[str] = mapped_column(String(40), default="manual_unverified")
+
+
+class SimulationRun(Base, TimestampMixin):
+    __tablename__ = "simulation_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    generation_run_id: Mapped[str] = mapped_column(ForeignKey("generation_runs.id"), index=True)
+    program_commit_id: Mapped[str | None] = mapped_column(ForeignKey("program_commits.id"), index=True)
+    test_spec_revision_id: Mapped[str | None] = mapped_column(ForeignKey("test_spec_revisions.id"), index=True)
+    engine_version: Mapped[str] = mapped_column(String(32), default="kongpu-reference-v1")
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    verification_level: Mapped[str] = mapped_column(String(40), default="automatic_reference")
+    results_json: Mapped[str] = mapped_column(Text, default="[]")
+    trace_artifact_id: Mapped[str | None] = mapped_column(ForeignKey("source_artifacts.id"))
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class SimulationTrace(Base):
+    __tablename__ = "simulation_traces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    simulation_run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.id", ondelete="CASCADE"), index=True)
+    cycle: Mapped[int] = mapped_column(Integer)
+    step_id: Mapped[str | None] = mapped_column(String(160))
+    inputs_json: Mapped[str] = mapped_column(Text, default="{}")
+    outputs_json: Mapped[str] = mapped_column(Text, default="{}")
+    events_json: Mapped[str] = mapped_column(Text, default="[]")

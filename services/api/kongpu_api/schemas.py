@@ -68,3 +68,21 @@ class ProgramCommitRequest(BaseModel):
     message: str = Field(min_length=3, max_length=240)
     author: str = Field(default="本机工程师", min_length=1, max_length=120)
     expected_revision: int = Field(ge=1)
+
+
+class AdapterDetectRequest(BaseModel):
+    project_id: str | None = None
+    adapter_id: str = Field(min_length=2, max_length=80)
+
+
+class CompileRunRequest(BaseModel):
+    generation_run_id: str
+    adapter_id: str = Field(default="gxworks3", min_length=2, max_length=80)
+    expected_generation_revision: int = Field(ge=1)
+
+
+class SimulationRunRequest(BaseModel):
+    generation_run_id: str
+    input_overrides: dict[str, bool | int | float] = Field(default_factory=dict)
+    max_cycles: int = Field(default=100, ge=1, le=10_000)
+    expected_generation_revision: int = Field(ge=1)
