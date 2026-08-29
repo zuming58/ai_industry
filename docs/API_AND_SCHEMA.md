@@ -40,6 +40,27 @@
 | 历史 | GET /api/v1/projects/{project_id}/commits |
 | Commit | GET /api/v1/commits/{commit_id}、diff |
 
+## M3 前置接口
+
+| 领域 | 方法与路径 |
+|---|---|
+| Adapter 注册表 | GET /api/v1/adapters |
+| 只读环境检测 | POST /api/v1/adapters/detect |
+| 项目环境快照 | GET /api/v1/projects/{project_id}/adapter-environments |
+| 生成物审计 | POST/GET /api/v1/generation-runs/{run_id}/audit |
+| 编译准备 | POST/GET /api/v1/projects/{project_id}/compile-runs、GET /api/v1/compile-runs/{run_id} |
+| 外部证据 | POST /api/v1/compile-runs/{run_id}/evidence |
+| 参考模拟 | POST/GET /api/v1/projects/{project_id}/simulation-runs、GET /api/v1/simulation-runs/{run_id} |
+| Trace | GET /api/v1/simulation-runs/{run_id}/trace |
+
+Adapter v1 能力固定为 detect_environment、get_capabilities、prepare_workspace_copy、compile、get_diagnostics、start_simulation、get_trace、export_vendor_project。ManualAdapter 对厂商操作只返回 manual_required/unverified，不会启动未知程序；reference 的模拟入口只代表 automatic_reference。
+
+生成物审计绑定生成任务创建时的不可变 ProgramCommit，并再次核验 Control IR、TestSpec、ProgramArtifact 与锁定 MachineSpec 的内容哈希。审计报告按 audit_version + Commit 固定，重复请求复用同一结果；发现包含严重级别、文件/行号、稳定对象 ID、Excel 来源和恢复动作。
+
+编译准备状态为 manual_required，前置条件是生成任务处于 review_ready、审计存在且无 blocker。证据上传携带 expected_revision，原件按 SHA-256 去重保存，任何证据均保持 manual_unverified。
+
+参考模拟状态为 review_ready 或 failed，使用版本化 TestSpec DSL（当前 1.0）和受限表达式/赋值语法；不执行任意 Python、ST、Shell 或外部进程。结果绑定 ProgramCommit、TestSpecRevision、Control IR 和引擎版本，并保存不可变周期 Trace 工件。
+
 ## MachineSpec v1
 
 顶层字段：schema_version、template_version、generated_at、project、plc_target、components、signals、sequence、interlocks、exceptions。
@@ -66,3 +87,11 @@ Excel 工作表：
 - 程序生成进入独立分支，保存与提交不覆盖已有 Commit。
 - 文件路径经过仓库根目录守卫，拒绝路径穿越。
 - expected_revision 或 If-Match 不匹配时返回 409，禁止静默覆盖。
+
+## M3 安全与验证等级
+
+- automatic_reference：仅指控谱参考逻辑模拟的自动结果；不等同于 GX Simulator3。
+- unverified：厂商 Adapter、编译准备和环境能力尚未由真实工具验证。
+- manual_unverified：外部日志、截图和报告已导入但没有集中验证签名。
+- 本机未安装或未配置 GX Works3、GX Simulator3、MX Component 时，API 返回 unavailable 或 manual_required，不猜测版本、不执行任意命令。
+- 详见 Adapter 安全与依赖矩阵文档。

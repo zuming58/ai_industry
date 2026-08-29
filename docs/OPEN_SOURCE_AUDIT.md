@@ -31,6 +31,10 @@
 
 M1/M2 的解析器、规则、版本模型、Control IR 和 FX5U ST 骨架均为本仓库自主实现，没有复制上述 GPL/LGPL 项目代码。当前运行依赖的 Python/npm 包由清单管理；进入可发布安装包前仍需生成完整第三方许可证清单。
 
+M3 前置的 Adapter 注册表、Manual/Reference Adapter 契约、生成物 Audit v1 和受限 TestSpec 参考模拟器同样为本仓库自主实现。参考模拟只使用 Python 标准库 ast 对白名单节点做解释，不加载或执行外部 ST/Python 代码；没有复制 Beremiz、MatIEC、OpenPLC 或其他 GPL/LGPL 实现。
+
+当前没有新增运行时厂商依赖。GX Works3、GX Simulator3、MX Component、AutoShop 和 CODESYS 只作为未来人工验证目标，不被本机代码自动下载、启动或控制。任何未来引入的 Adapter 或开源库必须固定 Commit、保留 LICENSE/NOTICE、生成 SBOM，并通过权限、网络、文件写入、超时和回滚审计。
+
 ## 后续自主审计步骤
 
 1. 为 IEC Checker 建立隔离 spike，固定版本并比较其结果与本项目规则；不通过则不集成。
