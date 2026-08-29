@@ -1,0 +1,111 @@
+import { expect, test, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+async function expectNoHorizontalOverflow(page: Page) {
+  const dimensions = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    document: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
+}
+
+test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
+  const projectName = `E2E FX5U ${Date.now()}`;
+
+  await page.goto("/projects");
+  await page.getByRole("button", { name: "新建项目" }).click();
+  await page.getByLabel("项目名称").fill(projectName);
+  await page.getByLabel("客户编号").fill("E2E-CUSTOMER");
+  await page.getByRole("button", { name: "保存项目" }).click();
+  await expect(page.getByText("项目已创建")).toBeVisible();
+  const projectRow = page.getByRole("row").filter({ hasText: projectName });
+  await projectRow.getByRole("button", { name: "打开" }).click();
+
+  await expect(page.getByRole("heading", { name: new RegExp(`MachineSpec 模板 · ${projectName}`) })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载完整范例" }).click();
+  const template = await downloadPromise;
+  const templatePath = await template.path();
+  expect(templatePath).toBeTruthy();
+
+  await page.getByRole("link", { name: "P04 导入校验" }).click();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "MachineSpec_example.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: readFileSync(templatePath!),
+  });
+  await expect(page.getByText("Excel 已上传并完成确定性校验")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "结构化工作表" })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  await page.getByRole("link", { name: "P05 规格审阅" }).click();
+  await expect(page.getByRole("heading", { name: "锁定门禁" })).toBeVisible();
+  await page.getByRole("button", { name: "锁定规格" }).click();
+  await expect(page.locator(".toast--error")).toContainText("MachineSpec 尚未满足锁定条件");
+  await expect(page.locator(".toast--error")).toContainText("确认视图");
+
+  while (await page.getByRole("button", { name: /接受：/ }).count()) {
+    page.once("dialog", (dialog) => dialog.accept("E2E 自动化复核：接受范例中的非阻断提示"));
+    await page.getByRole("button", { name: /接受：/ }).first().click();
+    await expect(page.getByText("Warning 已接受并写入审计记录")).toBeVisible();
+  }
+
+  const requiredViews = await page.locator(".tab-strip button").allTextContents();
+  for (const label of requiredViews) {
+    const tab = page.locator(".tab-strip button").filter({ hasText: label.trim() });
+    await tab.click();
+    const confirmButton = page.getByRole("button", { name: "确认当前视图" });
+    if (await confirmButton.isEnabled()) {
+      await confirmButton.click();
+      await expect(page.getByText(new RegExp(`${label.trim()}已确认`))).toBeVisible();
+    }
+  }
+  await page.getByRole("button", { name: "锁定规格" }).click();
+  await expect(page.getByText("MachineSpec 已生成不可变锁定快照")).toBeVisible();
+  await expect(page.getByText("locked")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  await page.getByRole("link", { name: "P06 程序工程" }).click();
+  await page.locator(".real-empty").getByRole("button", { name: "生成程序" }).click();
+  await expect(page.getByText("已生成确定性 FX5U ST 骨架和 TestSpec")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "程序树" })).toBeVisible();
+  const editor = page.locator(".code-editor");
+  await editor.fill(`${await editor.inputValue()}\n// E2E reviewed change.\n`);
+  await page.locator(".code-panel__header").getByRole("button", { name: "保存" }).click();
+  await expect(page.getByText("文件已保存到工作分支，尚未提交")).toBeVisible();
+  await page.getByLabel("提交说明").fill("E2E review generated program");
+  await expect(page.getByRole("button", { name: "创建 Commit" })).toBeEnabled();
+  await page.getByRole("button", { name: "创建 Commit" }).click();
+  await expect(page.getByText("程序修改已提交到本地 Git 历史")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  await page.getByRole("link", { name: "P11 版本" }).click();
+  await page.getByRole("button", { name: /E2E review generated program/ }).click();
+  await expect(page.locator(".diff-panel")).toContainText("E2E reviewed change");
+  await expectNoHorizontalOverflow(page);
+
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const projectUrl = new URL(page.url());
+  const projectId = projectUrl.pathname.split("/")[2];
+  for (const route of ["templates", "imports", "review", "program", "versions"]) {
+    await page.goto(`/projects/${projectId}/${route}`);
+    await expect(page.locator("main")).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+  }
+});
+
+test("unsupported workbook is rejected with a recoverable error", async ({ page, request }) => {
+  const response = await request.post("http://127.0.0.1:8010/api/v1/projects", {
+    data: { name: `Invalid workbook ${Date.now()}`, customer_code: "E2E-BAD" },
+  });
+  expect(response.ok()).toBeTruthy();
+  const project = await response.json();
+  await page.goto(`/projects/${project.id}/imports`);
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "legacy.xls",
+    mimeType: "application/vnd.ms-excel",
+    buffer: Buffer.from("not an xlsx workbook"),
+  });
+  await expect(page.locator(".toast--error")).toContainText(/xlsx|Excel|文件/);
+});
