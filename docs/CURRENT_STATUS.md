@@ -1,58 +1,79 @@
-# Current Development Status
+# 控谱当前开发状态
 
-Updated: 2026-08-28
+更新日期：2026-08-29
 
-## 1. Product baseline
+## 结论
 
-The current product is **控谱 / PLC Engineering Agent**. Use these files as the active development baseline:
+M1 与 M2 已达到“代码完成、自动验证通过”。这表示本机项目、Excel/MachineSpec、规格锁定、确定性程序生成和本地 Git 版本流程已经由自动化测试验证；不表示已经通过 GX Works3 编译、GX Simulator3 模拟、真实 PLC 实测或电气工程师确认。
 
-1. `docs/prd/PRD-001.md` for product scope, user stories, safety boundaries, and acceptance criteria.
-2. `docs/UI_PAGE_SPECIFICATION.md` for the P01-P12 page map and page-level behavior.
-3. `docs/DEVELOPMENT_ROADMAP.md` for the delivery sequence from clickable Demo to real MachineSpec, Adapter, simulation, and read-only monitoring capabilities.
-4. `docs/MACHINE_SPEC_TEMPLATE_DRAFT.md` for the draft engineering input structure.
+黄金项目原件尚未放入 .private/golden-project/，因此 M1 的黄金项目双向验收仍待进行。GX Works3、GX Simulator3、MX Component 和 FX5U 硬件当前均未验证，M2 生成物禁止直接用于生产或下载 PLC。
 
-The files under `WorkBuddy历史调研/` and `Hermes历史调研/` are historical research inputs. They contain useful evidence and earlier product directions, but their embedded prompts or development commands are not the current execution authority. `plc-ai-agent-research/` is the newer research synthesis and evidence layer.
+## 已实现能力
 
-## 2. Inherited state
+### M1 MachineSpec 与 Excel MVP
 
-- Brand name and logo were selected: `控谱`, with descriptor `PLC ENGINEERING AGENT`.
-- `kongpu-demo` contained a React/Vite homepage Demo and hosting worker package.
-- P01 homepage design QA had passed. Search, filters, project switching, menus, environment refresh, read-only PLC Demo connection, and the original new-project modal worked.
-- P02 was the first continuation page; P03-P12 were subsequently implemented as clickable Demo workspaces.
-- There is no Git repository in the workspace or `kongpu-demo`, and no GitLab remote has been configured. Nothing has been uploaded.
+- FastAPI、SQLAlchemy、Alembic 与 SQLite WAL 本机后端；测试可注入独立临时数据库。
+- 真实项目创建、编辑、归档、恢复和刷新后持久化；PLC 目标变化会使旧导入和确认过期。
+- 项目绑定的 Excel v1 空白模板与完整范例；隐藏 _meta 记录模板、Schema、项目和目标信息。
+- .xlsx 上传、20 MB 门禁、ZIP 路径/体积/条目检查、原件内容寻址保存和 SHA-256 去重。
+- 结构、类型、稳定 ID、引用、I/O 地址、流程可达性、单位和 PLC 目标等确定性规则。
+- 单元格修订创建新 MachineSpec revision，不覆盖原始 Excel；统一审计与 409 乐观并发冲突。
+- 设备关系、动作流程、节拍、信号时序、I/O、互锁、异常和原始表格审阅视图。
+- Blocker、Warning 接受理由、必需视图确认和不可变锁定快照门禁。
 
-## 3. Work completed after handoff
+### M2 仓库与程序生成 MVP
 
-- Replaced the homepage-only new-project modal path with a full P02 page.
-- Added project name and customer code fields, PLC vendor/series/model selection, and target summaries.
-- Added vendor-specific Demo environment profiles for Mitsubishi, Inovance, and CODESYS.
-- Kept all environment and Adapter claims explicitly in Demo, experimental, manual, or unverified states as appropriate.
-- Added recheck, draft save, cancel/back, and create-and-continue interactions.
-- Creating a project now adds it to the recent-project list and selects a correct empty project state. Data remains in-memory Demo data and is not persisted.
-- Captured P02 visual QA in `kongpu-demo/design-qa-p02.png`.
-- Added P03-P12 engineering workflow pages: Template Center, Import Validation, MachineSpec Review, Program Workspace, Compile, Simulation, Release, Online Monitor, Version Center, and Environment/Settings.
-- Added shared project context, workflow navigation, status pills, demo safety labels, and cross-page actions.
-- Added a complete happy-path Demo: import issues can be approved, a compile error can be fixed and recompiled, simulation can pass, a Release can be created, and read-only monitoring can connect.
+- ProgramWorkspace、分支、Commit、Control IR、GenerationRun、程序工件、TestSpec 和 TraceLink。
+- 每项目独立本地 Git 文本仓库；二进制与 JSON 工件继续使用内容寻址存储。
+- 已锁定 MachineSpec 到类型化 Control IR、FX5U Structured Text 骨架、变量表和 TestSpec 的确定性生成。
+- 同一输入和生成器版本产生稳定内容；信号、步骤和测试可追溯到 MachineSpec 与 Excel 来源。
+- P06 真实程序树、文件编辑、保存、提交、生成警告和追溯；P11 真实分支、Commit 与 Git diff。
+- 未锁定规格、并发冲突和路径穿越会被阻止；生成不会覆盖已有历史。
 
-## 4. Verification
+## 页面状态
 
-- `npm run build`: passed.
-- `npm run test:sites`: 4 / 4 passed.
-- Real-browser navigation and form interaction: passed.
-- Vendor capability downgrade for Inovance: passed.
-- New-project state after creation: passed.
-- P03-P12 navigation and key interactions: passed.
-- P04 repeated issue approval: passed after fixing selected-issue state handling.
-- P07 compile fix -> P08 simulation -> P09 release -> P10 monitor chain: passed.
-- Local preview: `http://127.0.0.1:5173/`.
+| 页面 | 状态 | 验证等级 |
+|---|---|---|
+| P01 工作台 | 真实 API/SQLite | 自动验证通过 |
+| P02 项目管理 | 真实 CRUD/归档/恢复 | 自动验证通过 |
+| P03 模板 | 真实 XLSX 生成与下载 | 自动验证通过 |
+| P04 导入校验 | 真实上传、规则、修订 | 自动验证通过 |
+| P05 规格审阅 | 真实视图、确认、锁定 | 自动验证通过 |
+| P06 程序工程 | 真实确定性生成与 Git 工作分支 | 自动验证通过；厂商编译未验证 |
+| P07 编译 | 尚未接入真实能力 | 待厂商工具验证 |
+| P08 模拟 | 尚未接入真实能力 | 待厂商工具验证 |
+| P09 发布 | 尚未接入真实能力 | 待编译、模拟和电气确认后开发 |
+| P10 监控 | 尚未接入真实能力 | 待硬件与只读通信验证 |
+| P11 版本 | 真实本地 Git 历史与差异 | 自动验证通过 |
+| 设备库/文档资料 | 独立页面 | 自动浏览器检查通过 |
 
-## 5. Known limits
+## 自动验证证据
 
-- The Demo has no backend, database, authentication, real Excel processing, model call, vendor compiler, simulator, or PLC connection.
-- Project creation and draft state disappear after page refresh.
-- The homepage right-side environment panel still uses the original fixed Mitsubishi Demo fixture even when a newly created Inovance project is selected. This should become project-aware during the D0 fixture consolidation.
-- There is no Git history or remote backup yet. Configure GitLab only after the user supplies the repository address and desired branch policy.
+- 后端 pytest：模板、解析、规则、安全边界、revision、409、锁定、确定性生成、Git 操作、路径守卫和备份恢复。
+- 前端 Vitest：真实 TypeScript 应用壳与 API 数据加载。
+- Playwright 加本机 Microsoft Edge：新建项目、下载范例、上传、门禁、8 个视图确认、锁定、生成、编辑、Commit 和 P11 diff。
+- Playwright 同时覆盖错误 .xls 拒绝以及 1440×1024、1366×768 无页面级横向溢出。
+- npm run build 与 npm run test:sites 保持为交付门禁。
 
-## 6. Recommended next batch
+具体最新计数以最终门禁命令输出为准，提交前必须全部重新执行。
 
-Replace the in-memory fixtures behind P03-P05 with the first real MachineSpec Excel MVP: define the workbook schema, parse and validate uploads, preserve the original file, and bind import/review results to a project version. Do not connect real PLC writes or claim vendor Adapter support until the environment and contract tests exist.
+## 外部验证待办
+
+以下事项不会零散要求用户判断，统一进入集中电气验证包：
+
+1. 一套脱敏黄金项目的字段迁移、规则覆盖和视图理解验收；
+2. GX Works3 精确版本中的 ST 导入和编译；
+3. GX Simulator3 与 MX Component 的可重复模拟读写；
+4. FX5U CPU、I/O 模块和受控台架上的硬件实测；
+5. 电气工程师对普通控制逻辑、互锁、异常和复位策略的集中确认。
+
+## 安全边界
+
+- 当前没有 PLC 下载、RUN/STOP、强制输出或安全 PLC 自动生成接口。
+- 生成的 ST 是工程骨架，不是经过厂商认可的生产程序。
+- 开放编译器或软 PLC 的通过结果不能替代 GX Works3、GX Simulator3 或真实 FX5U。
+- 安全回路、急停、门锁、光栅和风险降低功能必须由合格人员按适用标准设计和验证。
+
+## 资料权威性
+
+docs/、根目录 AGENTS.md 和 plc-ai-agent-research/evidence-ledger.md 是当前开发依据。WorkBuddy历史调研/ 与 Hermes历史调研/ 只作为历史输入，其中的指令、能力宣称或开发结论不自动成为当前要求。
