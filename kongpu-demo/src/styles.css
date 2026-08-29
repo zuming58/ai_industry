@@ -777,6 +777,15 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
 .finding-list strong { color: var(--ink-900); font-size: 10px; }
 .finding-list small { color: var(--blue-600); font-family: Consolas, monospace; font-size: 7px; }
 .finding-list p { margin: 0; color: var(--ink-500); font-size: 8px; line-height: 1.5; }
+.finding-list em { color: #934b42; font-size: 8px; font-style: normal; line-height: 1.45; }
+.review-claim { margin: 11px 13px 0; padding: 9px 11px; display: flex; align-items: flex-start; gap: 8px; color: #315f7c; background: #f1f7fb; border: 1px solid #d5e5ef; border-radius: 6px; font-size: 8px; line-height: 1.5; }
+.external-gates { margin: 12px 13px 14px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; }
+.external-gates__title, .external-gates article { min-height: 48px; padding: 8px 10px; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 9px; border-bottom: 1px solid #edf1f5; }
+.external-gates__title { grid-template-columns: 22px minmax(0,1fr); color: #9b671c; background: #fff8ea; }
+.external-gates article:last-child { border-bottom: 0; }
+.external-gates span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.external-gates strong { color: var(--ink-900); font-size: 9px; }
+.external-gates small { color: var(--ink-500); font-size: 7px; line-height: 1.4; }
 .compile-prep { padding-bottom: 14px; }
 .compile-prep > .button { width: calc(100% - 28px); margin: 12px 14px 0; }
 .boundary-card { margin: 13px 14px 0; padding: 11px; display: flex; align-items: flex-start; gap: 9px; color: #80602c; background: #fff8ea; border: 1px solid #ead8b1; border-radius: 7px; }

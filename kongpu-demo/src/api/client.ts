@@ -4,6 +4,7 @@ import type {
   ApiError,
   AdapterDescriptor,
   AdapterEnvironment,
+  AutomatedReviewRun,
   CompileRun,
   GenerationAudit,
   GenerationRun,
@@ -154,6 +155,19 @@ export const api = {
   },
   async getAudit(runId: string): Promise<GenerationAudit> {
     return ensure(await apiClient.GET("/api/v1/generation-runs/{run_id}/audit", { params: { path: { run_id: runId } } }));
+  },
+  async listAutomatedReviews(projectId: string): Promise<AutomatedReviewRun[]> {
+    return ensure(await apiClient.GET("/api/v1/projects/{project_id}/automated-reviews", { params: { path: { project_id: projectId } } }));
+  },
+  async getAutomatedReview(reviewId: string): Promise<AutomatedReviewRun> {
+    return ensure(await apiClient.GET("/api/v1/automated-reviews/{review_id}", { params: { path: { review_id: reviewId } } }));
+  },
+  async createAutomatedReview(projectId: string, generationRunId: string, repeatCount: number, expectedGenerationRevision: number): Promise<AutomatedReviewRun> {
+    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/automated-reviews", {
+      params: { path: { project_id: projectId } },
+      headers: { "If-Match": String(expectedGenerationRevision) },
+      body: { generation_run_id: generationRunId, repeat_count: repeatCount, expected_generation_revision: expectedGenerationRevision },
+    }));
   },
   async listCompileRuns(projectId: string): Promise<CompileRun[]> {
     return ensure(await apiClient.GET("/api/v1/projects/{project_id}/compile-runs", { params: { path: { project_id: projectId } } }));

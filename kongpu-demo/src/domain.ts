@@ -163,6 +163,44 @@ export type GenerationAudit = {
   updated_at: string;
 };
 
+export type AutomatedReviewCheck = {
+  id: string;
+  title: string;
+  status: "passed" | "failed";
+  severity: string;
+  detail: string;
+  evidence: Record<string, unknown>;
+  action?: string | null;
+};
+
+export type ExternalValidationGate = {
+  id: string;
+  title: string;
+  status: "pending_external";
+  required_evidence: string;
+};
+
+export type AutomatedReviewRun = {
+  id: string;
+  project_id: string;
+  generation_run_id: string;
+  program_commit_id: string;
+  review_version: string;
+  input_hash: string;
+  status: "passed" | "blocked";
+  verification_level: "automatic";
+  repeat_count: number;
+  checks: AutomatedReviewCheck[];
+  summary: { total: number; passed: number; failed: number; external_pending: number };
+  external_validation_gates: ExternalValidationGate[];
+  claim_boundary: string;
+  report_artifact_id: string;
+  report_sha256?: string | null;
+  reused?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export type CompileRun = {
   id: string;
   project_id: string;

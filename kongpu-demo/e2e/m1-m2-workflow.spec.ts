@@ -81,10 +81,13 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expectNoHorizontalOverflow(page);
 
   await page.getByRole("link", { name: "P07 编译" }).click();
-  await expect(page.getByRole("heading", { name: "生成物审计与编译准备" })).toBeVisible();
-  await page.getByRole("button", { name: "运行自审计" }).click();
-  await expect(page.getByText("生成物自审计已完成")).toBeVisible();
-  await expect(page.getByText(/Audit v1:/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "项目自动审核与编译准备" })).toBeVisible();
+  await expect(page.getByText(/Automated Review v1/)).toBeVisible();
+  await expect(page.getByText("确定性重复生成")).toBeVisible();
+  await expect(page.getByText("集中外部验证门")).toBeVisible();
+  await expect(page.getByText("GX Works3 导入与 Rebuild All")).toBeVisible();
+  await page.getByRole("button", { name: "重新运行自动审核" }).click();
+  await expect(page.getByText("自动审核输入未变化，已复用不可变报告")).toBeVisible();
   await page.getByRole("button", { name: "创建编译准备任务" }).click();
   await expect(page.getByText("已创建厂商编译准备任务，当前仍为未验证")).toBeVisible();
   await expect(page.getByText("manual_required")).toBeVisible();
@@ -96,6 +99,7 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText("外部证据已按哈希保存，验证等级保持 manual_unverified")).toBeVisible();
   await expect(page.getByText("证据数").locator("..")).toContainText("1");
   await page.reload();
+  await expect(page.getByText("确定性重复生成")).toBeVisible();
   await expect(page.getByText("manual_required")).toBeVisible();
   await expect(page.getByText("证据数").locator("..")).toContainText("1");
   await expectNoHorizontalOverflow(page);
