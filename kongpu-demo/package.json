@@ -6,14 +6,32 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/prepare-sites-build.mjs",
+    "typecheck": "tsc --noEmit",
+    "openapi": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/schema.d.ts",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
     "preview": "vite preview",
     "test:sites": "node --test tests/sites-worker.test.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
+    "@tanstack/react-query": "^5.102.8",
     "@vitejs/plugin-react": "5.0.4",
+    "openapi-fetch": "^0.17.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "react-router-dom": "^7.18.3",
     "vite": "6.4.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "jsdom": "^30.0.1",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.11"
   }
 }
