@@ -413,6 +413,18 @@ export type ProjectAcceptanceRun = {
   updated_at: string;
 };
 
+export type ProjectReadiness = {
+  schema: "kongpu-readiness/v1";
+  project: { id: string; code: string; name: string };
+  target: { profile_id: string; brand: string; series: string; model: string; vendor_tool: string; adapter_id: string };
+  status: "ready_for_external_validation" | "automatic_work_remaining";
+  verification_level: "automatic" | "automatic_partial";
+  checks: Array<{ id: string; title: string; status: "ready" | "remaining"; detail: string }>;
+  summary: { total: number; ready: number; remaining: number; external_pending: number };
+  external_validation_gates: ExternalValidationGate[];
+  claim_boundary: string;
+};
+
 export type CommitComparison = {
   schema: "kongpu-version-comparison/v1";
   base: ProgramCommit;

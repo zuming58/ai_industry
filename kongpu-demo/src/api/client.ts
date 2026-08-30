@@ -22,6 +22,7 @@ import type {
   CommissioningTask,
   CommitComparison,
   ProjectAcceptanceRun,
+  ProjectReadiness,
   RestoreBranchResult,
   ProjectTimeline,
   LocalSettings,
@@ -255,6 +256,11 @@ export const api = {
   },
   async listAcceptanceRuns(projectId: string): Promise<ProjectAcceptanceRun[]> {
     return ensure(await apiClient.GET("/api/v1/projects/{project_id}/acceptance-runs", { params: { path: { project_id: projectId } } }));
+  },
+  async getProjectReadiness(projectId: string, generationRunId?: string): Promise<ProjectReadiness> {
+    return ensure(await apiClient.GET("/api/v1/projects/{project_id}/readiness", {
+      params: { path: { project_id: projectId }, query: generationRunId ? { generation_run_id: generationRunId } : {} },
+    }));
   },
   async createAcceptanceRun(projectId: string, run: GenerationRun, candidateId?: string): Promise<ProjectAcceptanceRun> {
     return ensure(await apiClient.POST("/api/v1/projects/{project_id}/acceptance-runs", {
