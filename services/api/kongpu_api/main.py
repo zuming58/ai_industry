@@ -30,6 +30,7 @@ from .machine_spec import (
     required_review_views, sheet_payload, spec_hash, validate_spec,
 )
 from .simulation import SimulationInputError, run_test_spec
+from .version_compare import compare_version_snapshots
 from .monitoring import (
     MonitoringInputError, analyze_snapshot, build_variable_map,
     target_fingerprint, variable_map_hash,
@@ -229,6 +230,231 @@ def commit_dict(commit: ProgramCommit) -> dict[str, Any]:
         "machine_spec_revision_id": commit.machine_spec_revision_id,
         "control_ir_revision_id": commit.control_ir_revision_id,
         "created_at": commit.created_at.isoformat(),
+    }
+
+
+def _latest_for_commit(
+    session: Session, model: Any, commit_id: str
+) -> Any | None:
+    return session.scalar(
+        select(model)
+        .where(model.program_commit_id == commit_id)
+        .order_by(model.created_at.desc())
+    )
+
+
+def version_snapshot(
+    session: Session,
+    settings: Settings,
+    commit: ProgramCommit,
+) -> dict[str, Any]:
+    branch = require_branch(session, commit.branch_id)
+    workspace = require_workspace(session, branch.workspace_id)
+    if not commit.machine_spec_revision_id or not commit.control_ir_revision_id:
+        raise api_error(
+            "PROGRAM_COMMIT_BASELINE_INCOMPLETE",
+            "Commit 缺少 MachineSpec 或 Control IR 基线",
+            409,
+            action="从完整生成任务创建新 Commit",
+        )
+    spec_revision = session.get(
+        MachineSpecRevision, commit.machine_spec_revision_id
+    )
+    control_ir = session.get(ControlIRRevision, commit.control_ir_revision_id)
+    if spec_revision is None or control_ir is None:
+        raise api_error(
+            "PROGRAM_COMMIT_BASELINE_INCOMPLETE",
+            "Commit 绑定的 MachineSpec 或 Control IR 已丢失",
+            410,
+        )
+    locked = session.scalar(
+        select(LockedMachineSpec).where(
+            LockedMachineSpec.spec_revision_id == spec_revision.id
+        )
+    )
+    if (
+        locked is None
+        or locked.content_hash != spec_revision.content_hash
+        or spec_hash(json.loads(spec_revision.data_json)) != spec_revision.content_hash
+        or content_hash(control_ir.data_json) != control_ir.content_hash
+    ):
+        raise api_error(
+            "PROGRAM_COMMIT_BASELINE_HASH_MISMATCH",
+            "Commit 绑定的不可变规格或 Control IR 哈希不匹配",
+            409,
+            action="停止比较并检查本机数据库与工件库",
+        )
+    generation = session.scalar(
+        select(GenerationRun)
+        .where(
+            GenerationRun.branch_id == branch.id,
+            GenerationRun.spec_revision_id == spec_revision.id,
+            GenerationRun.control_ir_revision_id == control_ir.id,
+        )
+        .order_by(GenerationRun.created_at.desc())
+    )
+    if generation is None:
+        raise api_error(
+            "GENERATION_BASELINE_INCOMPLETE",
+            "Commit 缺少可追溯的生成任务",
+            409,
+        )
+    test_spec = session.scalar(
+        select(TestSpecRevision).where(
+            TestSpecRevision.generation_run_id == generation.id
+        )
+    )
+    if (
+        test_spec is None
+        or content_hash(test_spec.data_json) != test_spec.content_hash
+    ):
+        raise api_error(
+            "TEST_SPEC_BASELINE_HASH_MISMATCH",
+            "Commit 绑定的 TestSpec 缺失或哈希不匹配",
+            409,
+        )
+    try:
+        repo = ensure_repository(settings, workspace.project_id)
+        files = {
+            path: read_file_at_commit(repo, commit.git_sha, path)
+            for path in list_files_at_commit(repo, commit.git_sha)
+        }
+        committed_control_ir = json.loads(files["generated/ControlIR.json"])
+        committed_test_spec = json.loads(files["tests/TestSpec.json"])
+    except (RepositoryError, UnicodeDecodeError, json.JSONDecodeError, KeyError) as exc:
+        raise api_error(
+            "PROGRAM_COMMIT_READ_FAILED",
+            f"无法读取 Commit 的不可变源码树: {exc}",
+            409,
+            action="检查本地 Git 仓库完整性",
+        )
+    if (
+        stable_json(committed_control_ir) != control_ir.data_json
+        or stable_json(committed_test_spec) != test_spec.data_json
+    ):
+        raise api_error(
+            "PROGRAM_COMMIT_BASELINE_MISMATCH",
+            "Commit 中的 Control IR 或 TestSpec 与数据库基线不一致",
+            409,
+        )
+
+    automated = _latest_for_commit(session, AutomatedReviewRun, commit.id)
+    generation_audit = _latest_for_commit(session, GenerationAudit, commit.id)
+    simulation = _latest_for_commit(session, SimulationRun, commit.id)
+    compile_run = _latest_for_commit(session, CompileRun, commit.id)
+    candidate = _latest_for_commit(session, ReleaseCandidate, commit.id)
+    acceptance = _latest_for_commit(session, ProjectAcceptanceRun, commit.id)
+    candidate_verification = (
+        session.scalar(
+            select(ReleaseCandidateVerification)
+            .where(
+                ReleaseCandidateVerification.release_candidate_id == candidate.id
+            )
+            .order_by(ReleaseCandidateVerification.created_at.desc())
+        )
+        if candidate
+        else None
+    )
+    environment = (
+        session.get(AdapterEnvironment, compile_run.adapter_environment_id)
+        if compile_run and compile_run.adapter_environment_id
+        else None
+    )
+    compile_evidence_count = (
+        session.scalar(
+            select(func.count())
+            .select_from(EvidenceArtifact)
+            .where(EvidenceArtifact.compile_run_id == compile_run.id)
+        )
+        if compile_run
+        else 0
+    ) or 0
+
+    def result_summary(
+        item: Any | None,
+        *,
+        fields: tuple[str, ...],
+        missing_status: str = "not_run",
+    ) -> dict[str, Any]:
+        if item is None:
+            return {"status": missing_status, "verification_level": "unverified"}
+        return {field: getattr(item, field) for field in fields}
+
+    spec_data = json.loads(spec_revision.data_json)
+    control_ir_data = json.loads(control_ir.data_json)
+    test_spec_data = json.loads(test_spec.data_json)
+    verification = {
+        "automated_review": result_summary(
+            automated,
+            fields=(
+                "status", "verification_level", "review_version",
+                "input_hash", "repeat_count",
+            ),
+        ),
+        "generation_audit": result_summary(
+            generation_audit,
+            fields=("status", "audit_version", "input_hash"),
+        ),
+        "reference_simulation": result_summary(
+            simulation,
+            fields=("status", "verification_level", "engine_version"),
+        ),
+        "release_candidate": result_summary(
+            candidate,
+            fields=(
+                "status", "verification_level", "version",
+                "manifest_hash",
+            ),
+        ),
+        "candidate_integrity": result_summary(
+            candidate_verification,
+            fields=("status", "verification_level", "input_hash"),
+        ),
+        "project_acceptance": result_summary(
+            acceptance, fields=("status", "verification_level", "input_hash")
+        ),
+    }
+    vendor_configuration = {
+        "compile_preparation": result_summary(
+            compile_run,
+            fields=(
+                "status", "verification_level", "adapter_id",
+                "failure_reason",
+            ),
+        ),
+        "environment": (
+            {
+                "adapter_id": environment.adapter_id,
+                "adapter_version": environment.adapter_version,
+                "status": environment.status,
+                "verification_level": environment.verification_level,
+                "fingerprint": environment.fingerprint,
+            }
+            if environment
+            else {"status": "not_detected", "verification_level": "unverified"}
+        ),
+        "manual_evidence_count": compile_evidence_count,
+        "vendor_project_binary": {
+            "status": "not_integrated",
+            "verification_level": "unverified",
+        },
+    }
+    return {
+        "commit": commit_dict(commit),
+        "files": files,
+        "machine_spec": spec_data,
+        "control_ir": control_ir_data,
+        "test_spec": test_spec_data,
+        "generation": {
+            "generator_version": generation.generator_version,
+            "machine_spec_hash": spec_revision.content_hash,
+            "control_ir_hash": control_ir.content_hash,
+            "test_spec_hash": test_spec.content_hash,
+            "plc_target": spec_data.get("plc_target", {}),
+            "warnings": json.loads(generation.warnings_json),
+        },
+        "verification": verification,
+        "vendor_configuration": vendor_configuration,
     }
 
 
@@ -3084,12 +3310,13 @@ def compare_program_commits(
         diff = compare_commits(repo, base.git_sha, target.git_sha)
     except RepositoryError as exc:
         raise api_error("REPOSITORY_ERROR", str(exc), 422)
-    return {
-        "base": commit_dict(base),
-        "target": commit_dict(target),
-        "same_commit": base.git_sha == target.git_sha,
-        "diff": diff,
-    }
+    comparison = compare_version_snapshots(
+        version_snapshot(session, runtime_settings, base),
+        version_snapshot(session, runtime_settings, target),
+        source_diff=diff,
+    )
+    comparison["diff"] = diff
+    return comparison
 
 
 @router.post("/api/v1/commits/{commit_id}/restore-branches", status_code=201)

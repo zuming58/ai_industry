@@ -202,8 +202,57 @@ def test_commit_compare_and_restore_preserve_history_and_reset_results(
         f"/api/v1/commits/{initial['id']}/diff/{latest['id']}"
     )
     assert comparison.status_code == 200, comparison.text
-    assert comparison.json()["same_commit"] is False
-    assert "Compare and restore evidence" in comparison.json()["diff"]
+    comparison_payload = comparison.json()
+    assert comparison_payload["schema"] == "kongpu-version-comparison/v1"
+    assert comparison_payload["same_commit"] is False
+    assert "Compare and restore evidence" in comparison_payload["source_diff"]
+    assert comparison_payload["diff"] == comparison_payload["source_diff"]
+    sections = {item["id"]: item for item in comparison_payload["sections"]}
+    assert sections["source"]["status"] == "changed"
+    assert sections["source"]["summary"]["changed"] == 1
+    for unchanged in ("machine_spec", "io", "parameters", "control_ir", "test_spec", "generation"):
+        assert sections[unchanged]["status"] == "unchanged"
+    assert sections["verification"]["status"] == "changed"
+    assert sections["vendor_configuration"]["verification_level"] == "unverified"
+    assert "GX Works3" in sections["vendor_configuration"]["note"]
+
+    repeated = client.get(
+        f"/api/v1/commits/{initial['id']}/diff/{latest['id']}"
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["comparison_hash"] == comparison_payload["comparison_hash"]
+
+    current_listing = client.get(f"/api/v1/branches/{branch_id}/files").json()
+    uncommitted = client.patch(
+        f"/api/v1/branches/{branch_id}/files/src/PRG_AutoCycle.st",
+        json={
+            "content": source + "\n// This must not leak into an explicit Commit comparison.\n",
+            "reason": "验证明确 SHA 与工作区隔离",
+            "expected_revision": current_listing["branch"]["revision"],
+        },
+    )
+    assert uncommitted.status_code == 200, uncommitted.text
+    while_dirty = client.get(
+        f"/api/v1/commits/{initial['id']}/diff/{latest['id']}"
+    )
+    assert while_dirty.status_code == 200, while_dirty.text
+    assert while_dirty.json()["comparison_hash"] == comparison_payload["comparison_hash"]
+    assert "must not leak" not in while_dirty.json()["source_diff"]
+    cleaned_by_commit = client.post(
+        f"/api/v1/branches/{branch_id}/commits",
+        json={
+            "message": "Commit isolated worktree evidence",
+            "author": "自动测试",
+            "expected_revision": uncommitted.json()["branch"]["revision"],
+        },
+    )
+    assert cleaned_by_commit.status_code == 201, cleaned_by_commit.text
+    current_head = cleaned_by_commit.json()
+    after_new_head = client.get(
+        f"/api/v1/commits/{initial['id']}/diff/{latest['id']}"
+    )
+    assert after_new_head.status_code == 200, after_new_head.text
+    assert after_new_head.json()["comparison_hash"] == comparison_payload["comparison_hash"]
 
     _simulate(client, project, run)
     historical_candidate = _candidate(client, project, run)
@@ -237,7 +286,7 @@ def test_commit_compare_and_restore_preserve_history_and_reset_results(
         ).json()
         if item["id"] == branch_id
     )
-    assert source_branch_after["head_commit"] == latest["git_sha"]
+    assert source_branch_after["head_commit"] == current_head["git_sha"]
     restored_run = payload["generation_run"]
     restored_reviews = client.get(
         f"/api/v1/projects/{project['id']}/automated-reviews"
