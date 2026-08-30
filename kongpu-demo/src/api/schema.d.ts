@@ -264,6 +264,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/release-candidates/{candidate_id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Release Candidate */
+        post: operations["verify_release_candidate_api_v1_release_candidates__candidate_id__verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/acceptance-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Acceptance Runs */
+        get: operations["list_project_acceptance_runs_api_v1_projects__project_id__acceptance_runs_get"];
+        put?: never;
+        /** Create Project Acceptance Run */
+        post: operations["create_project_acceptance_run_api_v1_projects__project_id__acceptance_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/acceptance-runs/{acceptance_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Acceptance Run */
+        get: operations["get_project_acceptance_run_api_v1_acceptance_runs__acceptance_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/monitoring-plans": {
         parameters: {
             query?: never;
@@ -814,6 +866,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/commits/{base_commit_id}/diff/{target_commit_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare Program Commits */
+        get: operations["compare_program_commits_api_v1_commits__base_commit_id__diff__target_commit_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/commits/{commit_id}/restore-branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Restore Branch */
+        post: operations["create_restore_branch_api_v1_commits__commit_id__restore_branches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -866,6 +952,11 @@ export interface components {
             name: string;
             /** Base Commit */
             base_commit?: string | null;
+        };
+        /** CandidateVerificationRequest */
+        CandidateVerificationRequest: {
+            /** Expected Candidate Revision */
+            expected_candidate_revision: number;
         };
         /** CellEdit */
         CellEdit: {
@@ -969,6 +1060,15 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
         };
+        /** ProjectAcceptanceRequest */
+        ProjectAcceptanceRequest: {
+            /** Generation Run Id */
+            generation_run_id: string;
+            /** Release Candidate Id */
+            release_candidate_id?: string | null;
+            /** Expected Generation Revision */
+            expected_generation_revision: number;
+        };
         /** ProjectCreate */
         ProjectCreate: {
             /** Name */
@@ -1012,6 +1112,13 @@ export interface components {
             generation_run_id: string;
             /** Expected Generation Revision */
             expected_generation_revision: number;
+        };
+        /** RestoreBranchRequest */
+        RestoreBranchRequest: {
+            /** Name */
+            name?: string | null;
+            /** Expected Source Branch Revision */
+            expected_source_branch_revision: number;
         };
         /** SimulationRunRequest */
         SimulationRunRequest: {
@@ -1697,6 +1804,150 @@ export interface operations {
             header?: never;
             path: {
                 candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_release_candidate_api_v1_release_candidates__candidate_id__verify_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CandidateVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_acceptance_runs_api_v1_projects__project_id__acceptance_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_project_acceptance_run_api_v1_projects__project_id__acceptance_runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectAcceptanceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_project_acceptance_run_api_v1_acceptance_runs__acceptance_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                acceptance_id: string;
             };
             cookie?: never;
         };
@@ -3015,6 +3266,79 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_program_commits_api_v1_commits__base_commit_id__diff__target_commit_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                base_commit_id: string;
+                target_commit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_restore_branch_api_v1_commits__commit_id__restore_branches_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                commit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreBranchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

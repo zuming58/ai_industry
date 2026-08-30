@@ -262,6 +262,74 @@ export type ReleaseCandidate = {
   updated_at: string;
 };
 
+export type CandidateVerification = {
+  id: string;
+  project_id: string;
+  release_candidate_id: string;
+  input_hash: string;
+  status: "passed";
+  verification_level: "automatic_integrity";
+  checks: Array<{
+    id: string;
+    title: string;
+    status: "passed" | "failed";
+    detail: string;
+    evidence: Record<string, unknown>;
+  }>;
+  summary: { total: number; passed: number; failed: number };
+  report_artifact_id: string;
+  report_sha256?: string | null;
+  reused?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProjectAcceptanceRun = {
+  id: string;
+  project_id: string;
+  generation_run_id: string;
+  program_commit_id: string;
+  automated_review_id: string;
+  generation_audit_id: string;
+  simulation_run_id: string;
+  release_candidate_id?: string | null;
+  candidate_verification_id?: string | null;
+  input_hash: string;
+  status: "automatic_passed_external_pending";
+  verification_level: "automatic";
+  checks: Array<{
+    id: string;
+    title: string;
+    status: "passed" | "not_applicable";
+    detail: string;
+    evidence: Record<string, unknown>;
+  }>;
+  summary: { total: number; passed: number; external_pending: number };
+  external_validation_gates: ExternalValidationGate[];
+  claim_boundary: string;
+  report_artifact_id: string;
+  report_sha256?: string | null;
+  reused?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CommitComparison = {
+  base: ProgramCommit;
+  target: ProgramCommit;
+  same_commit: boolean;
+  diff: string;
+};
+
+export type RestoreBranchResult = {
+  branch: ProgramBranch;
+  generation_run: GenerationRun;
+  commit: ProgramCommit;
+  source_commit: ProgramCommit;
+  inherited_results: unknown[];
+  verification_boundary: string;
+};
+
 export type MonitoringVariable = {
   name: string;
   signal_id: string;

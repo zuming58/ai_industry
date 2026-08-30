@@ -742,10 +742,17 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
 .branch-row, .commit-row { width: 100%; min-height: 58px; padding: 9px 12px; display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; gap: 8px; color: var(--ink-700); background: transparent; border: 0; border-bottom: 1px solid #edf1f5; text-align: left; }
 .commit-row { cursor: pointer; }
 .commit-row:hover { background: #f7fafc; }
+.commit-row.is-selected { background: #eef5fa; }
 .branch-row > span, .commit-row > span { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .branch-row strong, .commit-row strong { color: var(--ink-900); font-size: 9px; }
 .branch-row small, .commit-row small { overflow: hidden; color: var(--ink-500); font-family: Consolas, monospace; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
 .diff-panel pre { min-height: 520px; }
+.version-compare-toolbar { padding: 10px 12px; display: grid; grid-template-columns: minmax(150px,1fr) minmax(150px,1fr) minmax(180px,1fr) auto; align-items: end; gap: 8px; background: #f7fafc; border-bottom: 1px solid #dce4ec; }
+.version-compare-toolbar label { min-width: 0; display: grid; gap: 5px; color: var(--ink-500); font-size: 8px; }
+.version-compare-toolbar select, .version-compare-toolbar input { width: 100%; height: 32px; min-width: 0; padding: 0 8px; color: var(--ink-900); background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 8px; }
+.version-compare-toolbar .button { white-space: nowrap; }
+.version-boundary { padding: 8px 12px; display: flex; align-items: flex-start; gap: 7px; color: #5a6d7f; background: #f1f7fb; border-bottom: 1px solid #dce8ef; font-size: 8px; line-height: 1.45; }
+.version-boundary svg { flex: 0 0 auto; color: var(--blue-600); }
 .unavailable { min-height: 260px; padding: 32px; display: flex; align-items: center; justify-content: center; gap: 18px; color: #a66b16; background: #fffaf0; border-color: #ead8b7; }
 .unavailable strong { color: var(--ink-900); font-size: 16px; }
 .unavailable p { max-width: 680px; margin: 7px 0; color: var(--ink-700); font-size: 10px; line-height: 1.6; }
@@ -809,6 +816,7 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
 .gate-icon--ready { color: #276d55; background: #e7f4ee; }
 .candidate-detail { margin: 0 14px 14px; border-top: 1px solid #e2e8ef; padding-top: 13px; }
 .candidate-detail__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.candidate-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .candidate-detail__head span, .candidate-row span { display: grid; gap: 2px; }
 .candidate-detail__head strong { font-size: 15px; }
 .candidate-detail__head small, .candidate-row small { color: #708095; font-size: 9px; }
@@ -817,6 +825,15 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
 .candidate-detail dt, .fingerprints dt { color: #6b7787; }
 .candidate-detail dd, .fingerprints dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .candidate-detail code, .fingerprints code { font-size: 8px; color: #31445b; }
+.acceptance-report { margin-top: 12px; padding: 12px; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; gap: 10px; background: #f7fafc; border: 1px solid #dce4ec; border-radius: 7px; }
+.acceptance-report > div:first-child { display: grid; gap: 4px; }
+.acceptance-report > div:first-child strong { color: var(--ink-900); font-size: 10px; }
+.acceptance-report > div:first-child small { color: var(--ink-500); font-size: 8px; line-height: 1.45; }
+.acceptance-checks { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
+.acceptance-checks span { min-width: 0; min-height: 34px; padding: 7px 8px; display: grid; grid-template-columns: 18px minmax(0,1fr) auto; align-items: center; gap: 6px; color: #2f765e; background: #eef8f4; border: 1px solid #d2e8df; border-radius: 5px; }
+.acceptance-checks b { overflow: hidden; color: var(--ink-900); font-size: 8px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.acceptance-report dl { grid-column: 1 / -1; margin: 0; }
+.acceptance-report > p { grid-column: 1 / -1; margin: 0; color: var(--ink-500); font-size: 8px; line-height: 1.5; }
 .release-gates { margin: 0; }
 .candidate-history { margin-top: 12px; }
 .candidate-row { display: grid; grid-template-columns: minmax(180px,1fr) minmax(120px,180px) auto 34px; align-items: center; gap: 12px; padding: 9px 14px; border-top: 1px solid #e6ebf1; }
@@ -868,6 +885,7 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
   .import-layout { grid-template-columns: 260px minmax(330px,.8fr) minmax(360px,1.1fr); }
   .program-layout { grid-template-columns: 200px minmax(430px,1fr) 235px; }
   .version-layout { grid-template-columns: 230px 270px minmax(0,1fr); }
+  .version-compare-toolbar { grid-template-columns: repeat(2,minmax(150px,1fr)); }
   .verification-grid, .simulation-workbench { grid-template-columns: minmax(0,1fr) 275px; }
   .release-workbench { grid-template-columns: minmax(0,1fr) 300px; }
   .monitoring-workbench { grid-template-columns: minmax(0,1fr) 310px; }

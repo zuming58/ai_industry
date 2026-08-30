@@ -124,6 +124,14 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText("automatic_package")).toBeVisible();
   await expect(page.getByText("集中外部验证门")).toBeVisible();
   await expect(page.getByText("GX Works3 导入与 Rebuild All")).toBeVisible();
+  await page.getByRole("button", { name: "独立复核 ZIP" }).click();
+  await expect(page.getByText("候选 ZIP 已重新读取并通过独立完整性复核")).toBeVisible();
+  await expect(page.getByText("passed").first()).toBeVisible();
+  await page.getByRole("button", { name: "生成自动验收报告" }).click();
+  await expect(page.getByText("项目自动验收完成；厂商、硬件和电气验证仍待集中进行")).toBeVisible();
+  await expect(page.getByText("automatic_passed_external_pending").first()).toBeVisible();
+  await expect(page.getByText("程序 Commit 与不可变生成基线")).toBeVisible();
+  await expect(page.getByText("交付候选包完整性")).toBeVisible();
   const candidateDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载 ZIP" }).click();
   const candidateArchive = await candidateDownload;
@@ -132,6 +140,9 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText("不可变输入未变化，已复用交付候选包")).toBeVisible();
   await page.reload();
   await expect(page.getByText("RC-0001").first()).toBeVisible();
+  await expect(page.getByText("automatic_passed_external_pending").first()).toBeVisible();
+  await page.getByRole("button", { name: "复核并复用验收报告" }).click();
+  await expect(page.getByText("自动验收输入未变化，已复用不可变报告")).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
   await page.getByRole("link", { name: "P10 监控" }).click();
@@ -153,8 +164,20 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expectNoHorizontalOverflow(page);
 
   await page.getByRole("link", { name: "P11 版本" }).click();
-  await page.getByRole("button", { name: /E2E review generated program/ }).click();
+  const baseCommitOption = page.getByLabel("基线 Commit").locator("option").filter({ hasText: "Generate FX5U ST" }).first();
+  const targetCommitOption = page.getByLabel("目标 Commit").locator("option").filter({ hasText: "E2E review generated program" }).first();
+  const baseCommitValue = await baseCommitOption.getAttribute("value");
+  const targetCommitValue = await targetCommitOption.getAttribute("value");
+  expect(baseCommitValue).toBeTruthy();
+  expect(targetCommitValue).toBeTruthy();
+  await page.getByLabel("基线 Commit").selectOption(baseCommitValue!);
+  await page.getByLabel("目标 Commit").selectOption(targetCommitValue!);
   await expect(page.locator(".diff-panel")).toContainText("E2E reviewed change");
+  await page.getByLabel("恢复分支名").fill("restore/e2e-initial-baseline");
+  await page.getByRole("button", { name: "从基线创建恢复分支" }).click();
+  await expect(page.getByText(/已创建恢复分支 restore\/e2e-initial-baseline/)).toBeVisible();
+  await expect(page.getByText("restore/e2e-initial-baseline", { exact: true })).toBeVisible();
+  await expect(page.getByText(/恢复只复制历史源码基线并重新运行自动审核/)).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
   await page.setViewportSize({ width: 1366, height: 768 });

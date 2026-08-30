@@ -11,7 +11,8 @@ import { api, saveBlob } from "./api/client";
 import type {
   AdapterDescriptor, AdapterEnvironment, AutomatedReviewRun, CompileRun, GenerationRun,
   MachineSpec, MonitoringEvidence, ProgramBranch, ProgramCommit, ProgramFile,
-  Project, ReleaseCandidate, SimulationRun, SpecRevision, ValidationIssue,
+  Project, ProjectAcceptanceRun, ReleaseCandidate, CandidateVerification,
+  SimulationRun, SpecRevision, ValidationIssue,
 } from "./domain";
 
 const BRAND_ICON = "/assets/brand/kongpu-app-icon.png";
@@ -228,8 +229,41 @@ function ProgramPage() {
 }
 
 function VersionPage() {
-  const { projectId } = useProjectContext(); const branches = useQuery({ queryKey: ["branches", projectId], queryFn: () => api.listBranches(projectId) }); const commits = useQuery({ queryKey: ["commits", projectId], queryFn: () => api.listCommits(projectId) }); const [selected, setSelected] = useState<ProgramCommit | null>(null); const diff = useQuery({ queryKey: ["diff", selected?.id], queryFn: () => api.commitDiff(selected!.id), enabled: Boolean(selected) });
-  return <ProjectPage kicker="P11 · VERSION" title="版本中心" description="展示真实本地 Git 分支、Commit、MachineSpec 基线和差异；历史不可改写。"><div className="version-layout"><section className="panel"><div className="panel__header"><div><h3>程序分支</h3><p>{branches.data?.length || 0} 条</p></div></div>{branches.data?.map((branch: ProgramBranch) => <div className="branch-row" key={branch.id}><GitBranch size={16} /><span><strong>{branch.name}</strong><small>{branch.head_commit?.slice(0, 12) || "尚无提交"}</small></span><Status value={branch.status} /></div>)}</section><section className="panel"><div className="panel__header"><div><h3>Commit 历史</h3><p>点击查看完整差异</p></div></div>{commits.data?.map((commit: ProgramCommit) => <button className="commit-row" key={commit.id} onClick={() => setSelected(commit)}><Code size={16} /><span><strong>{commit.message}</strong><small>{commit.git_sha.slice(0, 12)} · {formatTime(commit.created_at)}</small></span><ArrowRight size={15} /></button>)}</section><section className="code-panel diff-panel"><div className="code-panel__header"><span>{selected ? selected.message : "选择 Commit"}</span></div><pre>{diff.data?.diff || "选择一条 Commit 查看真实 Git diff。"}</pre></section></div></ProjectPage>;
+  const queryClient = useQueryClient();
+  const { projectId } = useProjectContext();
+  const branches = useQuery({ queryKey: ["branches", projectId], queryFn: () => api.listBranches(projectId) });
+  const commits = useQuery({ queryKey: ["commits", projectId], queryFn: () => api.listCommits(projectId) });
+  const [baseId, setBaseId] = useState("");
+  const [targetId, setTargetId] = useState("");
+  const [restoreName, setRestoreName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const commitItems = commits.data || [];
+  const resolvedBaseId = baseId || commitItems[1]?.id || commitItems[0]?.id || "";
+  const resolvedTargetId = targetId || commitItems[0]?.id || "";
+  const baseCommit = commitItems.find((item) => item.id === resolvedBaseId);
+  const sourceBranch = branches.data?.find((item) => item.id === baseCommit?.branch_id);
+  const comparison = useQuery({ queryKey: ["commit-comparison", resolvedBaseId, resolvedTargetId], queryFn: () => api.compareCommits(resolvedBaseId, resolvedTargetId), enabled: Boolean(resolvedBaseId && resolvedTargetId) });
+  const restore = async () => {
+    if (!baseCommit || !sourceBranch) return;
+    setBusy(true);
+    try {
+      const result = await api.restoreCommit(baseCommit, sourceBranch, restoreName || undefined);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["branches", projectId] }),
+        queryClient.invalidateQueries({ queryKey: ["commits", projectId] }),
+        queryClient.invalidateQueries({ queryKey: ["runs", projectId] }),
+        queryClient.invalidateQueries({ queryKey: ["automated-reviews", projectId] }),
+      ]);
+      setRestoreName("");
+      notify("已创建恢复分支 " + result.branch.name + "；旧历史和验证结果未改写");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const comparisonTitle = comparison.data ? comparison.data.base.git_sha.slice(0, 12) + " → " + comparison.data.target.git_sha.slice(0, 12) : "选择两个 Commit";
+  return <ProjectPage kicker="P11 · VERSION" title="版本中心" description="比较任意两个真实 Commit，并从历史基线创建独立恢复分支；旧历史和验证结论不可改写。"><div className="version-layout"><section className="panel"><div className="panel__header"><div><h3>程序分支</h3><p>{branches.data?.length || 0} 条</p></div></div>{branches.data?.map((branch: ProgramBranch) => <div className="branch-row" key={branch.id}><GitBranch size={16} /><span><strong>{branch.name}</strong><small>{branch.head_commit?.slice(0, 12) || "尚无提交"}</small></span><Status value={branch.status} /></div>)}</section><section className="panel"><div className="panel__header"><div><h3>Commit 历史</h3><p>不可变本地 Git 记录</p></div></div>{commitItems.map((commit: ProgramCommit) => <button className={"commit-row " + (resolvedBaseId === commit.id || resolvedTargetId === commit.id ? "is-selected" : "")} key={commit.id} onClick={() => setTargetId(commit.id)}><Code size={16} /><span><strong>{commit.message}</strong><small>{commit.git_sha.slice(0, 12)} · {formatTime(commit.created_at)}</small></span><ArrowRight size={15} /></button>)}</section><section className="code-panel diff-panel"><div className="version-compare-toolbar"><label>基线 Commit<select aria-label="基线 Commit" value={resolvedBaseId} onChange={(event) => setBaseId(event.target.value)}>{commitItems.map((commit) => <option key={commit.id} value={commit.id}>{commit.message} · {commit.git_sha.slice(0, 8)}</option>)}</select></label><label>目标 Commit<select aria-label="目标 Commit" value={resolvedTargetId} onChange={(event) => setTargetId(event.target.value)}>{commitItems.map((commit) => <option key={commit.id} value={commit.id}>{commit.message} · {commit.git_sha.slice(0, 8)}</option>)}</select></label><label>恢复分支名（可选）<input aria-label="恢复分支名" value={restoreName} onChange={(event) => setRestoreName(event.target.value)} placeholder="restore/历史基线" /></label><button className="button button--outline" disabled={busy || !baseCommit || !sourceBranch} onClick={restore}><GitBranch size={15} />{busy ? "创建中…" : "从基线创建恢复分支"}</button></div><div className="version-boundary"><Info size={17} /><span>恢复只复制历史源码基线并重新运行自动审核，不继承旧静态审计、参考模拟、候选包或厂商验证。</span></div><div className="code-panel__header"><span>{comparisonTitle}</span></div><pre>{comparison.isLoading ? "正在比较不可变 Commit…" : comparison.isError ? errorMessage(comparison.error) : comparison.data?.diff || (comparison.data?.same_commit ? "两个选择指向同一 Commit。" : "两个 Commit 没有文本差异。")}</pre></section></div></ProjectPage>;
 }
 
 function CapabilityPage() {
@@ -249,13 +283,18 @@ function ReleasePage() {
   const reviews = useQuery({ queryKey: ["automated-reviews", projectId], queryFn: () => api.listAutomatedReviews(projectId) });
   const simulations = useQuery({ queryKey: ["simulation-runs", projectId], queryFn: () => api.listSimulationRuns(projectId) });
   const candidates = useQuery({ queryKey: ["release-candidates", projectId], queryFn: () => api.listReleaseCandidates(projectId) });
+  const acceptances = useQuery({ queryKey: ["acceptance-runs", projectId], queryFn: () => api.listAcceptanceRuns(projectId) });
   const [runId, setRunId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [verification, setVerification] = useState<CandidateVerification | null>(null);
+  const [acceptance, setAcceptance] = useState<ProjectAcceptanceRun | null>(null);
   const selectedRunId = runId || runs.data?.[0]?.id || "";
   const run = runs.data?.find((item) => item.id === selectedRunId);
   const review = reviews.data?.find((item) => item.generation_run_id === selectedRunId);
   const simulation = simulations.data?.find((item) => item.generation_run_id === selectedRunId && item.status === "review_ready");
   const candidate = candidates.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === review?.program_commit_id);
+  const persistedAcceptance = acceptances.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === review?.program_commit_id && item.release_candidate_id === candidate?.id) || null;
+  const activeAcceptance = acceptance?.generation_run_id === selectedRunId ? acceptance : persistedAcceptance;
 
   const createCandidate = async () => {
     if (!run) return;
@@ -281,11 +320,40 @@ function ReleasePage() {
     }
   };
 
+  const verifyCandidate = async () => {
+    if (!candidate) return;
+    setBusy(true);
+    try {
+      const result = await api.verifyReleaseCandidate(candidate);
+      setVerification(result);
+      notify(result.reused ? "候选 ZIP 输入未变化，已复用完整性复核报告" : "候选 ZIP 已重新读取并通过独立完整性复核");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createAcceptance = async () => {
+    if (!run || !candidate) return;
+    setBusy(true);
+    try {
+      const result = await api.createAcceptanceRun(projectId, run, candidate.id);
+      setAcceptance(result);
+      await queryClient.invalidateQueries({ queryKey: ["acceptance-runs", projectId] });
+      notify(result.reused ? "自动验收输入未变化，已复用不可变报告" : "项目自动验收完成；厂商、硬件和电气验证仍待集中进行");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const gates = candidate?.manifest.external_validation_gates || review?.external_validation_gates || [];
   return <ProjectPage kicker="P09 · DELIVERY CANDIDATE" title="交付候选包" description="把当前通过自动审核的 Commit、参考模拟与证据打成确定性不可变 ZIP；这不是正式发布或厂商通过。">
     {!runs.data?.length ? <EmptyState title="尚无程序生成任务" text="先在 P06 生成程序，在 P07 完成自动审核，并在 P08 运行参考模拟。" /> : <>
       <div className="verification-toolbar release-toolbar"><label>生成任务<select value={selectedRunId} onChange={(event) => setRunId(event.target.value)}>{runs.data.map((item) => <option value={item.id} key={item.id}>{item.generator_version} · {formatTime(item.updated_at)}</option>)}</select></label><button className="button button--primary" disabled={busy || !run} onClick={createCandidate}><DownloadSimple size={16} />{busy ? "生成中…" : candidate ? "校验并复用候选包" : "生成交付候选包"}</button></div>
-      <div className="release-workbench"><section className="panel release-readiness"><div className="panel__header"><div><h3>自动交付门禁</h3><p>所有检查都绑定当前程序 Commit</p></div><Status value={candidate?.status || "待生成"} /></div><div className="readiness-list"><ReleaseGate label="当前 Commit 自动审核" ready={review?.status === "passed"} value={review?.status || "尚无报告"} /><ReleaseGate label="控谱参考逻辑模拟" ready={Boolean(simulation)} value={simulation?.status || "尚未运行"} /><ReleaseGate label="分支与不可变哈希" ready={Boolean(candidate)} value={candidate ? "已在后端校验" : "生成时校验"} /><ReleaseGate label="厂商/硬件/电气验证" ready={false} value="pending_external" /></div>{candidate ? <div className="candidate-detail"><div className="candidate-detail__head"><span><strong>{candidate.version}</strong><small>{candidate.verification_level} · {formatTime(candidate.created_at)}</small></span><button className="button button--outline" onClick={() => download(candidate)}><DownloadSimple size={16} />下载 ZIP</button></div><dl><dt>Program Commit</dt><dd><code>{candidate.program_commit_id}</code></dd><dt>Manifest SHA-256</dt><dd><code>{candidate.manifest_hash}</code></dd><dt>ZIP SHA-256</dt><dd><code>{candidate.package_sha256}</code></dd><dt>包内文件</dt><dd>{candidate.manifest.entries.length} 项 · {candidate.package_size_bytes} bytes</dd></dl><div className="review-claim"><Info size={17} /><span>{candidate.manifest.claim_boundary}</span></div></div> : <EmptyState title="尚未形成候选包" text="后端会检查分支无未提交修改、最新 Commit 自动审核、静态审计和参考模拟。" />}</section>
+      <div className="release-workbench"><section className="panel release-readiness"><div className="panel__header"><div><h3>自动交付门禁</h3><p>所有检查都绑定当前程序 Commit</p></div><Status value={activeAcceptance?.status || candidate?.status || "待生成"} /></div><div className="readiness-list"><ReleaseGate label="当前 Commit 自动审核" ready={review?.status === "passed"} value={review?.status || "尚无报告"} /><ReleaseGate label="控谱参考逻辑模拟" ready={Boolean(simulation)} value={simulation?.status || "尚未运行"} /><ReleaseGate label="候选 ZIP 独立复核" ready={Boolean(verification || activeAcceptance?.candidate_verification_id)} value={verification?.status || (activeAcceptance?.candidate_verification_id ? "passed" : "尚未复核")} /><ReleaseGate label="厂商/硬件/电气验证" ready={false} value="pending_external" /></div>{candidate ? <div className="candidate-detail"><div className="candidate-detail__head"><span><strong>{candidate.version}</strong><small>{candidate.verification_level} · {formatTime(candidate.created_at)}</small></span><div className="candidate-actions"><button className="button button--outline" disabled={busy} onClick={verifyCandidate}><CheckCircle size={16} />独立复核 ZIP</button><button className="button button--outline" onClick={() => download(candidate)}><DownloadSimple size={16} />下载 ZIP</button></div></div><dl><dt>Program Commit</dt><dd><code>{candidate.program_commit_id}</code></dd><dt>Manifest SHA-256</dt><dd><code>{candidate.manifest_hash}</code></dd><dt>ZIP SHA-256</dt><dd><code>{candidate.package_sha256}</code></dd><dt>包内文件</dt><dd>{candidate.manifest.entries.length} 项 · {candidate.package_size_bytes} bytes</dd></dl><div className="review-claim"><Info size={17} /><span>{candidate.manifest.claim_boundary}</span></div><div className="acceptance-report"><div><strong>项目自动验收总报告</strong><small>汇总当前 Commit 的自动审核、静态审计、参考模拟和候选包完整性。</small></div><button className="button button--primary" disabled={busy} onClick={createAcceptance}>{activeAcceptance ? "复核并复用验收报告" : "生成自动验收报告"}</button>{activeAcceptance && <><div className="acceptance-checks">{activeAcceptance.checks.map((check) => <span key={check.id}><CheckCircle size={15} weight="fill" /><b>{check.title}</b><Status value={check.status} /></span>)}</div><dl><dt>验收状态</dt><dd><Status value={activeAcceptance.status} /></dd><dt>报告 SHA-256</dt><dd><code>{activeAcceptance.report_sha256}</code></dd><dt>外部待验证</dt><dd>{activeAcceptance.summary.external_pending} 项</dd></dl><p>{activeAcceptance.claim_boundary}</p></>}</div></div> : <EmptyState title="尚未形成候选包" text="后端会检查分支无未提交修改、最新 Commit 自动审核、静态审计和参考模拟。" />}</section>
       <aside className="panel external-gates release-gates"><div className="external-gates__title"><WarningCircle size={17} /><span><strong>集中外部验证门</strong><small>不会由自动打包升级为通过</small></span></div>{gates.map((gate) => <article key={gate.id}><span><strong>{gate.title}</strong><small>{gate.required_evidence}</small></span><Status value={gate.status} /></article>)}{!gates.length && <EmptyState title="等待自动审核" text="生成程序后会建立五项外部验证门。" />}</aside></div>
       {Boolean(candidates.data?.length) && <section className="panel candidate-history"><div className="panel__header"><div><h3>历史候选包</h3><p>旧包不可覆盖，相同输入自动复用</p></div></div>{candidates.data?.map((item) => <div className="candidate-row" key={item.id}><span><strong>{item.version}</strong><small>{formatTime(item.created_at)} · {item.program_commit_id.slice(0, 12)}</small></span><code>{item.manifest_hash.slice(0, 16)}</code><Status value={item.status} /><button onClick={() => download(item)} aria-label={"下载 " + item.version}><DownloadSimple size={16} /></button></div>)}</section>}
     </>}

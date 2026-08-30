@@ -18,7 +18,11 @@ import type {
   SimulationRun,
   MonitoringPlan,
   MonitoringEvidence,
+  CandidateVerification,
   CommissioningTask,
+  CommitComparison,
+  ProjectAcceptanceRun,
+  RestoreBranchResult,
 } from "../domain";
 
 export const apiClient = createClient<paths>({ baseUrl: "" });
@@ -145,6 +149,18 @@ export const api = {
   async commitDiff(commitId: string): Promise<{ commit: ProgramCommit; diff: string }> {
     return ensure(await apiClient.GET("/api/v1/commits/{commit_id}/diff", { params: { path: { commit_id: commitId } } }));
   },
+  async compareCommits(baseCommitId: string, targetCommitId: string): Promise<CommitComparison> {
+    return ensure(await apiClient.GET("/api/v1/commits/{base_commit_id}/diff/{target_commit_id}", {
+      params: { path: { base_commit_id: baseCommitId, target_commit_id: targetCommitId } },
+    }));
+  },
+  async restoreCommit(commit: ProgramCommit, sourceBranch: ProgramBranch, name?: string): Promise<RestoreBranchResult> {
+    return ensure(await apiClient.POST("/api/v1/commits/{commit_id}/restore-branches", {
+      params: { path: { commit_id: commit.id } },
+      headers: { "If-Match": String(sourceBranch.revision) },
+      body: { name: name || null, expected_source_branch_revision: sourceBranch.revision },
+    }));
+  },
   async listAdapters(): Promise<AdapterDescriptor[]> {
     return ensure(await apiClient.GET("/api/v1/adapters"));
   },
@@ -203,6 +219,23 @@ export const api = {
       params: { path: { project_id: projectId } },
       headers: { "If-Match": String(expectedGenerationRevision) },
       body: { generation_run_id: generationRunId, expected_generation_revision: expectedGenerationRevision },
+    }));
+  },
+  async verifyReleaseCandidate(candidate: ReleaseCandidate): Promise<CandidateVerification> {
+    return ensure(await apiClient.POST("/api/v1/release-candidates/{candidate_id}/verify", {
+      params: { path: { candidate_id: candidate.id } },
+      headers: { "If-Match": String(candidate.revision) },
+      body: { expected_candidate_revision: candidate.revision },
+    }));
+  },
+  async listAcceptanceRuns(projectId: string): Promise<ProjectAcceptanceRun[]> {
+    return ensure(await apiClient.GET("/api/v1/projects/{project_id}/acceptance-runs", { params: { path: { project_id: projectId } } }));
+  },
+  async createAcceptanceRun(projectId: string, run: GenerationRun, candidateId?: string): Promise<ProjectAcceptanceRun> {
+    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/acceptance-runs", {
+      params: { path: { project_id: projectId } },
+      headers: { "If-Match": String(run.revision) },
+      body: { generation_run_id: run.id, release_candidate_id: candidateId || null, expected_generation_revision: run.revision },
     }));
   },
   async downloadArtifact(artifactId: string): Promise<Blob> {
