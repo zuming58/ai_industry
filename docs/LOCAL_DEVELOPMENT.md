@@ -18,6 +18,7 @@
     Set-Location ..
 
 .env.example 是配置样例。真实 .env、.private/ 和 .local-data/ 不进入 Git。
+可通过 KONGPU_MAX_UPLOAD_BYTES、KONGPU_MAX_ARTIFACT_BYTES、KONGPU_MAX_XLSX_UNCOMPRESSED_BYTES 和 KONGPU_MAX_XLSX_ENTRIES 调整本机输入上限；默认值分别为 20 MiB、150 MiB、100 MiB 和 2,000 条目。生产资料不应通过放宽限制绕过异常检查。
 
 ## 启动
 

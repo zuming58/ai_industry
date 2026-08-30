@@ -7,6 +7,7 @@ import re
 import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 from openpyxl import Workbook, load_workbook
@@ -285,11 +286,33 @@ def inspect_xlsx_archive(content: bytes, settings: Settings) -> None:
             total_size = sum(entry.file_size for entry in entries)
             if total_size > settings.max_xlsx_uncompressed_bytes:
                 raise WorkbookInputError("XLSX_EXPANSION_LIMIT", "工作簿解压后体积异常")
+            normalized_names: list[str] = []
             for entry in entries:
                 normalized = entry.filename.replace("\\", "/")
-                if normalized.startswith("/") or "../" in normalized:
+                posix_path = PurePosixPath(normalized)
+                windows_path = PureWindowsPath(normalized)
+                if (
+                    not normalized
+                    or normalized.startswith("/")
+                    or posix_path.is_absolute()
+                    or windows_path.is_absolute()
+                    or bool(windows_path.drive)
+                    or any(part in {"", ".", ".."} for part in normalized.split("/"))
+                ):
                     raise WorkbookInputError("XLSX_PATH_TRAVERSAL", "工作簿内部路径不安全")
-            if "[Content_Types].xml" not in {entry.filename for entry in entries}:
+                if entry.flag_bits & 0x1:
+                    raise WorkbookInputError("XLSX_ENCRYPTED", "不接受加密的 XLSX 工作簿")
+                lowered = normalized.lower()
+                if (
+                    lowered.endswith("vbaproject.bin")
+                    or lowered.startswith("xl/activex/")
+                    or lowered.startswith("xl/ctrlprops/")
+                ):
+                    raise WorkbookInputError("XLSX_ACTIVE_CONTENT", "不接受宏或 ActiveX 内容")
+                normalized_names.append(normalized)
+            if len(normalized_names) != len(set(normalized_names)):
+                raise WorkbookInputError("XLSX_DUPLICATE_ENTRY", "工作簿包含重复的内部路径")
+            if "[Content_Types].xml" not in set(normalized_names):
                 raise WorkbookInputError("INVALID_XLSX", "文件不是有效的 XLSX 工作簿")
     except zipfile.BadZipFile as exc:
         raise WorkbookInputError("INVALID_XLSX", "文件损坏或不是有效的 XLSX 工作簿") from exc

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     database_url: str | None = None
     cors_origins: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173"]
     max_upload_bytes: int = 20 * 1024 * 1024
+    max_artifact_bytes: int = 150 * 1024 * 1024
     max_xlsx_uncompressed_bytes: int = 100 * 1024 * 1024
     max_xlsx_entries: int = 2_000
 

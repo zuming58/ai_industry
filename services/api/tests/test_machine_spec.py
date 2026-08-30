@@ -96,6 +96,39 @@ def test_archive_security_limits(tmp_path) -> None:
         raise AssertionError("path traversal should be rejected")
 
 
+def test_archive_rejects_active_content_duplicate_and_windows_paths(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    cases = [
+        ("xl/vbaProject.bin", "XLSX_ACTIVE_CONTENT"),
+        ("xl/activeX/activeX1.bin", "XLSX_ACTIVE_CONTENT"),
+        ("C:/escape.xml", "XLSX_PATH_TRAVERSAL"),
+        ("xl/./workbook.xml", "XLSX_PATH_TRAVERSAL"),
+    ]
+    for name, expected_code in cases:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("[Content_Types].xml", "types")
+            archive.writestr(name, "bad")
+        try:
+            inspect_xlsx_archive(buffer.getvalue(), settings)
+        except WorkbookInputError as exc:
+            assert exc.code == expected_code
+        else:
+            raise AssertionError(f"{name} should be rejected")
+
+    duplicate = io.BytesIO()
+    with zipfile.ZipFile(duplicate, "w") as archive:
+        archive.writestr("[Content_Types].xml", "types")
+        archive.writestr("xl/workbook.xml", "first")
+        archive.writestr("xl/workbook.xml", "second")
+    try:
+        inspect_xlsx_archive(duplicate.getvalue(), settings)
+    except WorkbookInputError as exc:
+        assert exc.code == "XLSX_DUPLICATE_ENTRY"
+    else:
+        raise AssertionError("duplicate archive entries should be rejected")
+
+
 def test_project_import_revision_and_concurrency(
     client: TestClient,
     imported_example: dict,

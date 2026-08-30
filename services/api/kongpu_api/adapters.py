@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import getpass
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -19,6 +20,13 @@ CAPABILITIES = (
     "get_trace",
     "export_vendor_project",
 )
+
+ADAPTER_ALLOWED_ROOTS_ENV = "KONGPU_ADAPTER_ALLOWED_ROOTS"
+_ADAPTER_PATH_VARIABLES = {
+    "gxworks3": "KONGPU_GXWORKS3_PATH",
+    "autoshop": "KONGPU_AUTOSHOP_PATH",
+    "codesys": "KONGPU_CODESYS_PATH",
+}
 
 
 class AdapterContract(Protocol):
@@ -161,6 +169,71 @@ def adapter(adapter_id: str) -> AdapterContract:
     return ReferenceAdapter(item) if adapter_id == "reference" else ManualAdapter(item)
 
 
+def _redact_path(value: str) -> str:
+    """Keep environment snapshots useful without persisting local usernames."""
+    text = str(value).replace("\\", "/")
+    replacements = {
+        str(Path.home()).replace("\\", "/"): "<home>",
+        str(Path.cwd()).replace("\\", "/"): "<cwd>",
+        os.environ.get("USERNAME", ""): "<user>",
+        os.environ.get("USER", ""): "<user>",
+        getpass.getuser(): "<user>",
+    }
+    for needle, replacement in replacements.items():
+        if needle:
+            text = text.replace(needle, replacement)
+    return text
+
+
+def _allowed_roots(adapter_id: str) -> list[Path]:
+    """Return explicitly configured roots or conservative vendor install roots."""
+    configured = os.environ.get(ADAPTER_ALLOWED_ROOTS_ENV, "")
+    if configured:
+        values = [item.strip() for item in configured.split(os.pathsep) if item.strip()]
+        roots = [Path(item).expanduser() for item in values]
+    else:
+        vendor_names = {
+            "gxworks3": ("MELSOFT", "Mitsubishi Electric"),
+            "autoshop": ("Inovance", "汇川"),
+            "codesys": ("CODESYS",),
+        }[adapter_id]
+        roots = []
+        for variable in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            base = os.environ.get(variable)
+            if not base:
+                continue
+            base_path = Path(base)
+            roots.extend(base_path / name for name in vendor_names)
+    result: list[Path] = []
+    for root in roots:
+        try:
+            resolved = root.resolve(strict=False)
+        except OSError:
+            continue
+        if resolved not in result:
+            result.append(resolved)
+    return result
+
+
+def _validated_candidate(adapter_id: str, value: str) -> tuple[Path | None, str]:
+    """Validate a configured tool path without opening or executing it."""
+    try:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            return None, "relative_path_rejected"
+        resolved = candidate.resolve(strict=False)
+        roots = _allowed_roots(adapter_id)
+        if not any(resolved == root or root in resolved.parents for root in roots):
+            return None, "outside_allowlist"
+        if not candidate.exists():
+            return None, "not_found"
+        if not (candidate.is_file() or candidate.is_dir()):
+            return None, "not_file_or_directory"
+        return resolved, "accepted"
+    except (OSError, ValueError, RuntimeError):
+        return None, "invalid_path"
+
+
 def detect(adapter_id: str, target: dict[str, Any] | None = None) -> dict[str, Any]:
     item = descriptor(adapter_id)
     target = target or {}
@@ -177,18 +250,19 @@ def detect(adapter_id: str, target: dict[str, Any] | None = None) -> dict[str, A
         verification = "automatic_reference"
     else:
         # Environment detection is deliberately read-only. No vendor process is started.
-        variable = {
-            "gxworks3": "KONGPU_GXWORKS3_PATH",
-            "autoshop": "KONGPU_AUTOSHOP_PATH",
-            "codesys": "KONGPU_CODESYS_PATH",
-        }[adapter_id]
+        variable = _ADAPTER_PATH_VARIABLES[adapter_id]
         value = os.environ.get(variable)
         candidates = [value] if value else []
         details["checked_environment_variable"] = variable
-        details["checked_paths"] = candidates
-        existing = next((str(Path(path)) for path in candidates if Path(path).exists()), None)
-        if existing:
-            details["detected_path"] = existing
+        details["checked_paths"] = [_redact_path(path) for path in candidates]
+        details["path_policy"] = "explicit allowlist or vendor installation roots; read-only"
+        existing = None
+        path_status = "not_configured"
+        if value:
+            existing, path_status = _validated_candidate(adapter_id, value)
+        details["path_status"] = path_status
+        if existing is not None:
+            details["detected_path"] = _redact_path(str(existing))
             status = "manual_required"
         else:
             status = "unavailable"

@@ -135,6 +135,9 @@ Excel 工作表：
 - 程序生成进入独立分支，保存与提交不覆盖已有 Commit。
 - 文件路径经过仓库根目录守卫，拒绝路径穿越。
 - expected_revision 或 If-Match 不匹配时返回 409，禁止静默覆盖。
+- 工件读取先检查数据库元数据、磁盘大小和 SHA-256，再加载内容；单个工件默认上限 150 MiB，异常会返回 `ARTIFACT_TOO_LARGE`、`ARTIFACT_SIZE_MISMATCH` 或 `ARTIFACT_HASH_MISMATCH`。
+- XLSX 只接受未加密 `.xlsx`：拒绝绝对路径、盘符路径、`.`/`..` 内部路径、重复 ZIP 条目、宏/ActiveX 内容和超限解压体积。
+- 每个项目 Git 工作树在进程内按仓库串行化；可变请求取得锁后重新读取 revision，文件写入先整体校验并采用临时文件原子替换。仓库限制为最多 2,000 个文件、100 MiB 总体积、单文件 8 MiB。
 
 ## M3 安全与验证等级
 

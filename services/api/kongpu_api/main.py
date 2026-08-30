@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -9,11 +9,11 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .artifacts import artifact_path, store_bytes
+from .artifacts import ArtifactIntegrityError, read_stored_bytes, store_bytes
 from .adapters import descriptor, descriptors, detect as detect_adapter
 from .audit import audit_bundle
 from .automated_review import (
@@ -48,9 +48,9 @@ from .models import (
     ValidationIssue, new_id,
 )
 from .repository import (
-    RepositoryError, checkout_branch, commit_all, commit_diff, compare_commits, ensure_repository,
+    RepositoryError, checkout_branch, commit_all, commit_diff, compare_commits, create_generated_commit, ensure_repository,
     is_working_tree_clean, list_files, list_files_at_commit, parent_of, read_file,
-    read_file_at_commit, repository_path, validate_branch_name, write_files,
+    read_file_at_commit, repository_guard, repository_path, validate_branch_name, write_files,
 )
 from .schemas import (
     AdapterDetectRequest, AutomatedReviewRequest, BranchCreateRequest,
@@ -128,6 +128,20 @@ def create_app(
                 "message": "请求参数不符合接口约束",
                 "location": exc.errors(),
                 "action": "检查输入后重试",
+            },
+        )
+
+    @application.exception_handler(ArtifactIntegrityError)
+    async def artifact_integrity_error(
+        _request: Request, exc: ArtifactIntegrityError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": exc.code,
+                "message": str(exc),
+                "location": None,
+                "action": "停止使用该工件并检查本机数据目录",
             },
         )
 
@@ -829,19 +843,15 @@ def read_artifact_bytes(
     if record is None:
         raise api_error("ARTIFACT_NOT_FOUND", "文件工件不存在", 404)
     try:
-        path = artifact_path(settings, record)
-    except ValueError:
-        raise api_error("ARTIFACT_PATH_INVALID", "文件工件路径无效", 500)
-    if not path.is_file():
-        raise api_error("ARTIFACT_MISSING", "文件工件已丢失", 410)
-    content = path.read_bytes()
-    if sha256_bytes(content) != record.sha256:
+        content = read_stored_bytes(settings, record)
+    except ArtifactIntegrityError as exc:
+        status_code = 410 if exc.code == "ARTIFACT_MISSING" else 409
         raise api_error(
-            "ARTIFACT_HASH_MISMATCH",
-            "文件工件哈希不匹配",
-            409,
+            exc.code,
+            str(exc),
+            status_code,
             action="停止使用该工件并检查本机数据目录",
-        )
+        ) from exc
     return record, content
 
 
@@ -885,11 +895,11 @@ def generation_baseline(
         source = session.get(SourceArtifact, item.source_artifact_id)
         if source is None:
             raise api_error("GENERATION_ARTIFACT_MISSING", f"生成工件 {item.path} 的元数据不存在", 410)
-        path = artifact_path(settings, source)
-        if not path.is_file():
-            raise api_error("GENERATION_ARTIFACT_MISSING", f"生成工件 {item.path} 已丢失", 410)
         try:
-            text_value = path.read_text(encoding="utf-8")
+            _record, raw_value = read_artifact_bytes(
+                session, settings, item.source_artifact_id
+            )
+            text_value = raw_value.decode("utf-8")
         except UnicodeDecodeError:
             raise api_error("GENERATION_ARTIFACT_INVALID", f"生成工件 {item.path} 不是 UTF-8 文本", 422)
         if content_hash(text_value) != item.content_hash:
@@ -3453,25 +3463,15 @@ def download_artifact(
     artifact_id: str,
     runtime_settings: Settings = Depends(app_settings),
     session: Session = Depends(app_session),
-) -> FileResponse:
-    artifact = session.get(SourceArtifact, artifact_id)
-    if artifact is None:
-        raise api_error("ARTIFACT_NOT_FOUND", "文件工件不存在", 404)
-    try:
-        path = artifact_path(runtime_settings, artifact)
-    except ValueError:
-        raise api_error("ARTIFACT_PATH_INVALID", "文件工件路径无效", 500)
-    if not path.is_file():
-        raise api_error(
-            "ARTIFACT_MISSING",
-            "文件工件已丢失",
-            410,
-            action="从原始来源重新上传",
-        )
-    return FileResponse(
-        path,
+) -> Response:
+    artifact, content = read_artifact_bytes(session, runtime_settings, artifact_id)
+    return Response(
+        content=content,
         media_type=artifact.media_type,
-        filename=artifact.original_name,
+        headers={
+            "Content-Disposition": f'attachment; filename="{artifact.original_name}"',
+            "ETag": f'"{artifact.sha256}"',
+        },
     )
 
 
@@ -3507,7 +3507,6 @@ def create_generation_run(
         )
         if existing is not None:
             raise api_error("BRANCH_ALREADY_EXISTS", "程序分支已存在", 409, action="使用新的分支名称")
-        checkout_branch(repo, branch_name)
     except RepositoryError as exc:
         raise api_error("REPOSITORY_ERROR", str(exc), 422, action="检查分支名称和本地 Git 环境")
 
@@ -3544,7 +3543,6 @@ def create_generation_run(
         run.control_ir_revision_id = control_ir.id
         run.warnings_json = json.dumps(bundle.warnings, ensure_ascii=False)
 
-        write_files(repo, bundle.files)
         for output_path, file_content in bundle.files.items():
             media_type = "application/json" if output_path.endswith(".json") else "text/plain"
             stored = store_bytes(
@@ -3574,8 +3572,13 @@ def create_generation_run(
         for link in bundle.trace_links:
             session.add(TraceLink(generation_run_id=run.id, **link))
 
-        sha = commit_all(repo, f"Generate FX5U ST from MachineSpec {revision.sequence}")
-        branch.base_commit = parent_of(repo, sha)
+        sha, base_commit = create_generated_commit(
+            repo,
+            branch_name,
+            bundle.files,
+            f"Generate FX5U ST from MachineSpec {revision.sequence}",
+        )
+        branch.base_commit = base_commit
         branch.head_commit = sha
         branch.status = "clean"
         branch.revision += 1
@@ -3686,18 +3689,21 @@ def create_program_branch(
     return branch_dict(branch)
 
 
+@contextmanager
 def branch_repository(
     session: Session,
     settings: Settings,
     branch: ProgramBranch,
-) -> tuple[ProgramWorkspace, Any]:
+) -> Any:
     workspace = require_workspace(session, branch.workspace_id)
     try:
         repo = ensure_repository(settings, workspace.project_id)
-        checkout_branch(repo, branch.name)
+        with repository_guard(repo):
+            session.refresh(branch)
+            checkout_branch(repo, branch.name)
+            yield workspace, repo
     except RepositoryError as exc:
-        raise api_error("REPOSITORY_ERROR", str(exc), 422)
-    return workspace, repo
+        raise api_error("REPOSITORY_ERROR", str(exc), 422) from exc
 
 
 @router.get("/api/v1/branches/{branch_id}/files")
@@ -3707,8 +3713,8 @@ def list_branch_files(
     session: Session = Depends(app_session),
 ) -> dict[str, Any]:
     branch = require_branch(session, branch_id)
-    _workspace, repo = branch_repository(session, runtime_settings, branch)
-    return {"branch": branch_dict(branch), "files": list_files(repo)}
+    with branch_repository(session, runtime_settings, branch) as (_workspace, repo):
+        return {"branch": branch_dict(branch), "files": list_files(repo)}
 
 
 @router.get("/api/v1/branches/{branch_id}/files/{path:path}")
@@ -3719,11 +3725,11 @@ def get_branch_file(
     session: Session = Depends(app_session),
 ) -> dict[str, Any]:
     branch = require_branch(session, branch_id)
-    _workspace, repo = branch_repository(session, runtime_settings, branch)
-    try:
-        content = read_file(repo, path)
-    except RepositoryError as exc:
-        raise api_error("PROGRAM_FILE_NOT_FOUND", str(exc), 404)
+    with branch_repository(session, runtime_settings, branch) as (_workspace, repo):
+        try:
+            content = read_file(repo, path)
+        except RepositoryError as exc:
+            raise api_error("PROGRAM_FILE_NOT_FOUND", str(exc), 404) from exc
     return {"path": path, "content": content, "branch_revision": branch.revision}
 
 
@@ -3737,7 +3743,6 @@ def update_branch_file(
     session: Session = Depends(app_session),
 ) -> dict[str, Any]:
     branch = require_branch(session, branch_id)
-    check_expected_revision(branch.revision, payload.expected_revision, if_match)
     normalized_path = path.replace("\\", "/").lstrip("/")
     if normalized_path in {"generated/ControlIR.json", "tests/TestSpec.json"}:
         raise api_error(
@@ -3746,22 +3751,25 @@ def update_branch_file(
             409,
             action="修改锁定 MachineSpec 后创建新的生成任务",
         )
-    workspace, repo = branch_repository(session, runtime_settings, branch)
-    try:
-        write_files(repo, {path: payload.content})
-    except RepositoryError as exc:
-        raise api_error("PROGRAM_FILE_PATH_INVALID", str(exc), 422)
-    branch.status = "modified"
-    branch.revision += 1
-    audit(
-        session,
-        workspace.project_id,
-        "program.file_updated",
-        "ProgramBranch",
-        branch.id,
-        {"path": path, "reason": payload.reason},
-    )
-    session.commit()
+    with branch_repository(session, runtime_settings, branch) as (workspace, repo):
+        check_expected_revision(
+            branch.revision, payload.expected_revision, if_match
+        )
+        try:
+            write_files(repo, {path: payload.content})
+        except RepositoryError as exc:
+            raise api_error("PROGRAM_FILE_PATH_INVALID", str(exc), 422) from exc
+        branch.status = "modified"
+        branch.revision += 1
+        audit(
+            session,
+            workspace.project_id,
+            "program.file_updated",
+            "ProgramBranch",
+            branch.id,
+            {"path": path, "reason": payload.reason},
+        )
+        session.commit()
     return {"path": path, "content": payload.content, "branch": branch_dict(branch)}
 
 
@@ -3774,42 +3782,42 @@ def create_program_commit(
     session: Session = Depends(app_session),
 ) -> dict[str, Any]:
     branch = require_branch(session, branch_id)
-    check_expected_revision(branch.revision, payload.expected_revision, if_match)
-    workspace, repo = branch_repository(session, runtime_settings, branch)
-    if branch.status != "modified":
-        raise api_error("NO_PROGRAM_CHANGES", "当前分支没有待提交的修改", 409)
-    try:
-        sha = commit_all(repo, payload.message, payload.author)
-    except RepositoryError as exc:
-        raise api_error("REPOSITORY_ERROR", str(exc), 422)
-    commit = ProgramCommit(
-        branch_id=branch.id,
-        git_sha=sha,
-        message=payload.message,
-        author=payload.author,
-        machine_spec_revision_id=None,
-        control_ir_revision_id=None,
-    )
-    generation = session.scalar(
-        select(GenerationRun).where(GenerationRun.branch_id == branch.id)
-    )
-    if generation is None or not generation.control_ir_revision_id:
-        raise api_error(
-            "GENERATION_BASELINE_INCOMPLETE",
-            "当前分支没有可继承的生成基线",
-            409,
+    with branch_repository(session, runtime_settings, branch) as (workspace, repo):
+        check_expected_revision(
+            branch.revision, payload.expected_revision, if_match
         )
-    commit.machine_spec_revision_id = generation.spec_revision_id
-    commit.control_ir_revision_id = generation.control_ir_revision_id
-    session.add(commit)
-    session.flush()
-    branch.head_commit = sha
-    branch.status = "clean"
-    branch.revision += 1
-    generation.revision += 1
-    audit(session, workspace.project_id, "program.committed", "ProgramCommit", commit.id, {"git_sha": sha})
-    persist_automated_review(session, runtime_settings, generation, repeat_count=20)
-    session.commit()
+        if branch.status != "modified":
+            raise api_error("NO_PROGRAM_CHANGES", "当前分支没有待提交的修改", 409)
+        generation = session.scalar(
+            select(GenerationRun).where(GenerationRun.branch_id == branch.id)
+        )
+        if generation is None or not generation.control_ir_revision_id:
+            raise api_error(
+                "GENERATION_BASELINE_INCOMPLETE",
+                "当前分支没有可继承的生成基线",
+                409,
+            )
+        try:
+            sha = commit_all(repo, payload.message, payload.author)
+        except RepositoryError as exc:
+            raise api_error("REPOSITORY_ERROR", str(exc), 422) from exc
+        commit = ProgramCommit(
+            branch_id=branch.id,
+            git_sha=sha,
+            message=payload.message,
+            author=payload.author,
+            machine_spec_revision_id=generation.spec_revision_id,
+            control_ir_revision_id=generation.control_ir_revision_id,
+        )
+        session.add(commit)
+        session.flush()
+        branch.head_commit = sha
+        branch.status = "clean"
+        branch.revision += 1
+        generation.revision += 1
+        audit(session, workspace.project_id, "program.committed", "ProgramCommit", commit.id, {"git_sha": sha})
+        persist_automated_review(session, runtime_settings, generation, repeat_count=20)
+        session.commit()
     return commit_dict(commit)
 
 
@@ -3851,9 +3859,11 @@ def get_program_commit_diff(
     if commit is None:
         raise api_error("PROGRAM_COMMIT_NOT_FOUND", "程序提交不存在", 404)
     branch = require_branch(session, commit.branch_id)
-    _workspace, repo = branch_repository(session, runtime_settings, branch)
+    workspace = require_workspace(session, branch.workspace_id)
+    repo = ensure_repository(runtime_settings, workspace.project_id)
     try:
-        diff = commit_diff(repo, commit.git_sha)
+        with repository_guard(repo):
+            diff = commit_diff(repo, commit.git_sha)
     except RepositoryError as exc:
         raise api_error("REPOSITORY_ERROR", str(exc), 422)
     return {"commit": commit_dict(commit), "diff": diff}

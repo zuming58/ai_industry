@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from kongpu_api.generator import generate_bundle
+import kongpu_api.main as api_main
 from kongpu_api.models import ProgramBranch, ProgramCommit, ProgramWorkspace
 from kongpu_api.repository import RepositoryError, safe_file
 
@@ -98,6 +103,53 @@ def test_generation_edit_commit_and_diff(
 
     traversal = client.get(f"/api/v1/branches/{branch_id}/files/../secret.txt")
     assert traversal.status_code in {404, 422}
+
+
+def test_concurrent_program_edits_recheck_revision_inside_repository_lock(
+    client: TestClient,
+    project: dict,
+    locked_example: dict,
+    monkeypatch,
+) -> None:
+    generated = client.post(
+        f"/api/v1/projects/{project['id']}/generation-runs",
+        json={
+            "spec_revision_id": locked_example["revision"]["id"],
+            "branch_name": "generated/concurrent-revision",
+        },
+    )
+    assert generated.status_code == 201, generated.text
+    branch_id = generated.json()["branch_id"]
+    branch = client.get(f"/api/v1/branches/{branch_id}/files").json()["branch"]
+
+    entered = threading.Event()
+    release = threading.Event()
+    original_write_files = api_main.write_files
+
+    def blocking_write_files(repo, files):
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(timeout=5)
+        return original_write_files(repo, files)
+
+    monkeypatch.setattr(api_main, "write_files", blocking_write_files)
+    payload = {
+        "content": "// concurrent edit\n",
+        "reason": "验证并发 revision 门禁",
+        "expected_revision": branch["revision"],
+    }
+    endpoint = f"/api/v1/branches/{branch_id}/files/src/PRG_AutoCycle.st"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(client.patch, endpoint, json=payload)
+        assert entered.wait(timeout=5)
+        second = executor.submit(client.patch, endpoint, json=payload)
+        time.sleep(0.05)
+        release.set()
+        responses = [first.result(timeout=10), second.result(timeout=10)]
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    conflict = next(response for response in responses if response.status_code == 409)
+    assert conflict.json()["code"] == "REVISION_CONFLICT"
 
 
 def test_each_program_commit_gets_independent_review_and_current_binding(
