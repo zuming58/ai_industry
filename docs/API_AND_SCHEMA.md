@@ -101,7 +101,7 @@ AutomatedReviewRun 以 generation_run_id、review_version 和 input_hash 唯一�
 
 ProjectAcceptanceRun 绑定 GenerationRun、当前 ProgramCommit、AutomatedReviewRun、GenerationAudit、SimulationRun，以及可选的 ReleaseCandidateVerification。输入记录包含生成器、审核、审计、参考模拟引擎、TestSpec 和报告工件哈希；相同 project_id + input_hash 复用原报告。状态固定为 automatic_passed_external_pending，所有厂商工具、真实 PLC、安全回路和电气工程师门继续保持 pending_external。
 
-只读监控计划一对一绑定 ReleaseCandidate，变量白名单来自候选 Control IR，每项访问权限固定为 read_only。target_fingerprint 同时绑定项目、PLC 目标、候选 Manifest 和变量映射哈希。快照提交必须携带匹配指纹和 expected_plan_revision，只接受白名单内的 bool/int/float 离线值；证据固定为 manual_unverified。
+只读监控计划一对一绑定 ReleaseCandidate，变量白名单来自候选 Control IR，每项访问权限固定为 read_only；变量与工步定位遵循 IEC/ST 不区分大小写语义，仅大小写不同的重复变量、未知变量和非有限值会被确定性拒绝。target_fingerprint 同时绑定项目、PLC 目标、候选 Manifest 和变量映射哈希。快照提交必须携带匹配指纹和 expected_plan_revision，只接受白名单内的 bool/int/float 离线值；证据固定为 manual_unverified。
 
 CommissioningTask 只能由不可变 MonitoringEvidence 创建。系统从候选 ProgramCommit 派生 engineer/commissioning-* 分支，并复制 Control IR、TestSpec、ProgramArtifact 和 TraceLink 基线到新的 GenerationRun；后续修改形成新 Commit 和自动审核，不覆盖候选或来源历史。
 

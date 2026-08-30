@@ -14,6 +14,7 @@ from kongpu_api.delivery import (
     safe_package_path,
     verify_delivery_candidate,
 )
+from kongpu_api.monitoring import MonitoringInputError, analyze_snapshot, build_variable_map
 
 
 def _generated_run(
@@ -59,6 +60,31 @@ def test_delivery_zip_is_deterministic_and_rejects_tampering() -> None:
     source.close()
     with pytest.raises(DeliveryInputError, match="哈希"):
         verify_delivery_candidate(tampered_buffer.getvalue())
+
+
+def test_monitoring_identifier_semantics_and_snapshot_validation() -> None:
+    ir = {
+        "signals": [
+            {"id": "SIG_READY", "name": "Ready", "direction": "DI", "source": {"sheet": "Signals", "row": 2}},
+            {"id": "SIG_DONE", "name": "Done", "direction": "DO", "source": {"sheet": "Signals", "row": 3}},
+        ],
+        "steps": [{"id": "STEP_1", "completion_condition": "READY", "source": {"sheet": "Sequence", "row": 2}}],
+    }
+    variables = build_variable_map(ir)
+    analysis = analyze_snapshot(ir, variables, {"ready": True}, "step_1")
+    assert analysis["status"] == "recorded_unverified"
+    assert analysis["current_step_id"] == "STEP_1"
+    assert analysis["condition_values"] == {"Ready": True}
+
+    with pytest.raises(MonitoringInputError, match="重复"):
+        analyze_snapshot(ir, variables, {"Ready": True, "READY": False}, None)
+    with pytest.raises(MonitoringInputError, match="有限"):
+        analyze_snapshot(ir, variables, {"Ready": float("nan")}, None)
+    with pytest.raises(MonitoringInputError, match="不存在"):
+        analyze_snapshot(ir, variables, {}, "step_missing")
+    ambiguous = {**ir, "signals": [*ir["signals"], {"id": "SIG_READY_2", "name": "ready", "direction": "DI"}]}
+    with pytest.raises(MonitoringInputError, match="大小写"):
+        build_variable_map(ambiguous)
 
 
 def test_release_candidate_and_read_only_monitoring_flow(

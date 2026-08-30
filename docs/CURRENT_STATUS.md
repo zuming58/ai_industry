@@ -56,7 +56,7 @@ M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”�
 - 候选包可从内容寻址工件库重新读取并独立复核：校验外层 SHA-256、ZIP 安全路径、重复条目、解压上限、Manifest、逐项大小/哈希和生成任务/Commit 基线。报告不可变，验证等级固定为 automatic_integrity。
 - P09 可生成不可变 ProjectAcceptanceRun，总结当前 Commit 的 20 次自动审核、静态审计、当前 TestSpec 参考模拟和可选候选 ZIP 完整性。相同输入哈希复用原报告；Commit、审核、模拟引擎/TestSpec 或候选变化会形成新报告。
 - 自动验收状态固定为 automatic_passed_external_pending。报告会保留全部 pending_external 门，不会升级 GX Works3、GX Simulator3、真实 FX5U 或电气工程师验证等级。
-- P10 从候选 Control IR 建立只读变量白名单、目标指纹和变量映射哈希，只接受离线 JSON 快照，不连接 PLC、不保存通信凭据、不执行在线读取或写入。
+- P10 从候选 Control IR 建立只读变量白名单、目标指纹和变量映射哈希；变量和工步定位遵循 IEC/ST 不区分大小写语义，只接受经重复、未知和有限值检查的离线 JSON 快照，不连接 PLC、不保存通信凭据、不执行在线读取或写入。
 - 离线快照按 SHA-256 保存，验证等级固定为 manual_unverified；未知变量、错误工步、目标指纹不一致和过期 revision 均被拒绝。
 - 从离线证据创建调试任务时，只从候选 Commit 派生 engineer/commissioning-* 独立分支和新的 GenerationRun，不改写候选、原分支或 Git 历史。
 
