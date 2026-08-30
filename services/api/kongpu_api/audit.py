@@ -26,6 +26,67 @@ def _expression_identifiers(expression: Any) -> set[str]:
     return {item for item in _IDENTIFIER.findall(str(expression or "")) if item.upper() not in _KNOWN_WORDS}
 
 
+def _strip_st_non_executable(text: str) -> str:
+    """Remove ST comments and string contents while preserving line positions."""
+    output: list[str] = []
+    index = 0
+    state = "code"
+    block_end = ""
+    while index < len(text):
+        current = text[index]
+        following = text[index : index + 2]
+        if state == "code":
+            if following == "//":
+                state = "line_comment"
+                output.extend("  ")
+                index += 2
+                continue
+            if following in {"(*", "/*"}:
+                state = "block_comment"
+                block_end = "*)" if following == "(*" else "*/"
+                output.extend("  ")
+                index += 2
+                continue
+            if current in {"'", '"'}:
+                state = f"string:{current}"
+                output.append(" ")
+                index += 1
+                continue
+            output.append(current)
+            index += 1
+            continue
+        if state == "line_comment":
+            if current == "\n":
+                state = "code"
+                output.append(current)
+            else:
+                output.append(" ")
+            index += 1
+            continue
+        if state == "block_comment":
+            if following == block_end:
+                state = "code"
+                output.extend("  ")
+                index += 2
+            else:
+                output.append("\n" if current == "\n" else " ")
+                index += 1
+            continue
+        quote = state[-1]
+        if current == quote:
+            if text[index : index + 2] == quote * 2:
+                output.extend("  ")
+                index += 2
+            else:
+                state = "code"
+                output.append(" ")
+                index += 1
+        else:
+            output.append("\n" if current == "\n" else " ")
+            index += 1
+    return "".join(output)
+
+
 def audit_bundle(spec: dict[str, Any], bundle: GeneratedBundle) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     signals = [item for item in bundle.control_ir.get("signals", []) if item.get("name")]
@@ -113,9 +174,9 @@ def audit_bundle(spec: dict[str, Any], bundle: GeneratedBundle) -> dict[str, Any
     program = bundle.files.get("src/PRG_AutoCycle.st", "")
     if not program.startswith("PROGRAM") or "END_PROGRAM" not in program:
         findings.append(_finding("ST_PROGRAM_BOUNDARY", "blocker", "ST 程序边界异常", "未找到完整 PROGRAM/END_PROGRAM 边界。", file="src/PRG_AutoCycle.st"))
-    # Ignore comments when checking prohibited runtime operations. The generated
-    # safety banner intentionally mentions download/forced output as excluded.
-    executable_st = "\n".join(line.split("//", 1)[0] for line in program.splitlines())
+    # The generated safety banner intentionally names excluded operations. Only
+    # executable ST may trigger the prohibited-operation gate.
+    executable_st = _strip_st_non_executable(program)
     if "FORCED_OUTPUT" in executable_st.upper() or re.search(r"\bDOWNLOAD\s*\(", executable_st, re.IGNORECASE):
         findings.append(_finding("FORBIDDEN_CONTROL_OPERATION", "blocker", "发现禁止的控制操作", "生成物包含下载或强制输出关键字，已阻断。", file="src/PRG_AutoCycle.st", action="删除危险操作并重新生成"))
     input_hash = content_hash(stable_json({"generator_version": GENERATOR_VERSION, "files": bundle.files}))

@@ -20,29 +20,42 @@ from .automated_review import (
 )
 from .config import Settings, get_settings
 from .database import DatabaseRuntime
+from .delivery import (
+    DeliveryInputError, build_delivery_candidate, entry_index, sha256_bytes,
+    stable_json_bytes, verify_delivery_candidate,
+)
 from .generator import GeneratedBundle, GENERATOR_VERSION, content_hash, generate_bundle, stable_json
 from .machine_spec import (
     MachineSpec, WorkbookInputError, generate_workbook, parse_workbook, patch_cells,
     required_review_views, sheet_payload, spec_hash, validate_spec,
 )
 from .simulation import SimulationInputError, run_test_spec
+from .monitoring import (
+    MonitoringInputError, analyze_snapshot, build_variable_map,
+    target_fingerprint, variable_map_hash,
+)
 from .models import (
     AdapterEnvironment, AuditEvent, AutomatedReviewRun, CompileRun,
-    ControlIRRevision, EvidenceArtifact,
+    CommissioningTask, ControlIRRevision, EvidenceArtifact,
     GenerationAudit, GenerationRun, ImportVersion, LockedMachineSpec,
-    MachineSpecRevision, ProgramArtifact, ProgramBranch, ProgramCommit,
+    MachineSpecRevision, MonitoringEvidence, MonitoringPlan,
+    ProgramArtifact, ProgramBranch, ProgramCommit,
     ProgramWorkspace, Project, ReviewConfirmation, SourceArtifact,
-    SimulationRun, SimulationTrace, TemplateVersion, TestSpecRevision, TraceLink,
+    ReleaseCandidate, SimulationRun, SimulationTrace,
+    TemplateVersion, TestSpecRevision, TraceLink,
     ValidationIssue, new_id,
 )
 from .repository import (
     RepositoryError, checkout_branch, commit_all, commit_diff, ensure_repository,
-    list_files, parent_of, read_file, repository_path, validate_branch_name, write_files,
+    is_working_tree_clean, list_files, list_files_at_commit, parent_of, read_file,
+    read_file_at_commit, repository_path, validate_branch_name, write_files,
 )
 from .schemas import (
     AdapterDetectRequest, AutomatedReviewRequest, BranchCreateRequest,
     CellPatchRequest, CompileRunRequest,
-    ConfirmationRequest, GenerationRequest, SimulationRunRequest,
+    CommissioningTaskRequest, ConfirmationRequest, GenerationRequest,
+    MonitoringPlanRequest, MonitoringSnapshotRequest, ReleaseCandidateRequest,
+    SimulationRunRequest,
     ProgramCommitRequest, ProgramFilePatch, ProjectCreate, ProjectPatch,
     WarningAcceptRequest,
 )
@@ -289,7 +302,7 @@ def audit_dict(item: GenerationAudit) -> dict[str, Any]:
         "id": item.id,
         "generation_run_id": item.generation_run_id,
         "program_commit_id": item.program_commit_id,
-        "baseline_scope": "immutable_generation_artifacts",
+        "baseline_scope": "current_program_commit",
         "audit_version": item.audit_version,
         "input_hash": item.input_hash,
         "status": item.status,
@@ -378,6 +391,89 @@ def simulation_dict(session: Session, item: SimulationRun) -> dict[str, Any]:
     }
 
 
+def release_candidate_dict(session: Session, item: ReleaseCandidate) -> dict[str, Any]:
+    package = session.get(SourceArtifact, item.package_artifact_id)
+    return {
+        "id": item.id,
+        "project_id": item.project_id,
+        "generation_run_id": item.generation_run_id,
+        "program_commit_id": item.program_commit_id,
+        "automated_review_id": item.automated_review_id,
+        "version": item.version,
+        "input_hash": item.input_hash,
+        "manifest_hash": item.manifest_hash,
+        "manifest": json.loads(item.manifest_json),
+        "status": item.status,
+        "verification_level": item.verification_level,
+        "package_artifact_id": item.package_artifact_id,
+        "package_sha256": package.sha256 if package else None,
+        "package_size_bytes": package.size_bytes if package else None,
+        "revision": item.revision,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def monitoring_plan_dict(session: Session, item: MonitoringPlan) -> dict[str, Any]:
+    evidence_count = session.scalar(
+        select(func.count()).select_from(MonitoringEvidence).where(
+            MonitoringEvidence.monitoring_plan_id == item.id
+        )
+    ) or 0
+    return {
+        "id": item.id,
+        "project_id": item.project_id,
+        "release_candidate_id": item.release_candidate_id,
+        "target_fingerprint": item.target_fingerprint,
+        "variable_map_hash": item.variable_map_hash,
+        "variable_map": json.loads(item.variable_map_json),
+        "status": item.status,
+        "verification_level": item.verification_level,
+        "access": "read_only",
+        "evidence_count": evidence_count,
+        "revision": item.revision,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def monitoring_evidence_dict(session: Session, item: MonitoringEvidence) -> dict[str, Any]:
+    artifact = session.get(SourceArtifact, item.source_artifact_id)
+    task = session.scalar(
+        select(CommissioningTask).where(
+            CommissioningTask.monitoring_evidence_id == item.id
+        )
+    )
+    return {
+        "id": item.id,
+        "project_id": item.project_id,
+        "monitoring_plan_id": item.monitoring_plan_id,
+        "source_artifact_id": item.source_artifact_id,
+        "artifact_sha256": artifact.sha256 if artifact else None,
+        "status": item.status,
+        "verification_level": item.verification_level,
+        "analysis": json.loads(item.analysis_json),
+        "note": item.note,
+        "commissioning_task_id": task.id if task else None,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def commissioning_task_dict(item: CommissioningTask) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "project_id": item.project_id,
+        "monitoring_evidence_id": item.monitoring_evidence_id,
+        "branch_id": item.branch_id,
+        "generation_run_id": item.generation_run_id,
+        "description": item.description,
+        "status": item.status,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
 def check_expected_revision(current: int, expected: int | None, etag: str | None = None) -> None:
     requested = expected
     if etag:
@@ -386,6 +482,29 @@ def check_expected_revision(current: int, expected: int | None, etag: str | None
             requested = int(token)
     if requested is not None and requested != current:
         raise api_error("REVISION_CONFLICT", f"数据已更新，当前版本为 {current}", 409, action="刷新后重新操作")
+
+
+def read_artifact_bytes(
+    session: Session, settings: Settings, artifact_id: str
+) -> tuple[SourceArtifact, bytes]:
+    record = session.get(SourceArtifact, artifact_id)
+    if record is None:
+        raise api_error("ARTIFACT_NOT_FOUND", "文件工件不存在", 404)
+    try:
+        path = artifact_path(settings, record)
+    except ValueError:
+        raise api_error("ARTIFACT_PATH_INVALID", "文件工件路径无效", 500)
+    if not path.is_file():
+        raise api_error("ARTIFACT_MISSING", "文件工件已丢失", 410)
+    content = path.read_bytes()
+    if sha256_bytes(content) != record.sha256:
+        raise api_error(
+            "ARTIFACT_HASH_MISMATCH",
+            "文件工件哈希不匹配",
+            409,
+            action="停止使用该工件并检查本机数据目录",
+        )
+    return record, content
 
 
 def generation_baseline(
@@ -397,19 +516,30 @@ def generation_baseline(
         raise api_error("GENERATION_BASELINE_INCOMPLETE", "生成任务缺少不可变 Control IR 或分支基线", 409)
     control_ir = session.get(ControlIRRevision, run.control_ir_revision_id)
     test_spec = session.scalar(select(TestSpecRevision).where(TestSpecRevision.generation_run_id == run.id))
+    branch = session.get(ProgramBranch, run.branch_id)
+    if branch is None or not branch.head_commit:
+        raise api_error("GENERATION_BASELINE_INCOMPLETE", "生成分支缺少当前 Commit", 409)
     commit = session.scalar(
-        select(ProgramCommit)
-        .where(
-            ProgramCommit.branch_id == run.branch_id,
-            ProgramCommit.control_ir_revision_id == run.control_ir_revision_id,
+        select(ProgramCommit).where(
+            ProgramCommit.branch_id == branch.id,
+            ProgramCommit.git_sha == branch.head_commit,
         )
-        .order_by(ProgramCommit.created_at.asc())
     )
     if control_ir is None or test_spec is None or commit is None:
         raise api_error("GENERATION_BASELINE_INCOMPLETE", "生成任务缺少不可变工件、TestSpec 或 Commit", 409)
     if content_hash(control_ir.data_json) != control_ir.content_hash or content_hash(test_spec.data_json) != test_spec.content_hash:
         raise api_error("GENERATION_BASELINE_HASH_MISMATCH", "Control IR 或 TestSpec 基线哈希不匹配", 409, action="停止使用该基线并检查本机数据库")
-    files: dict[str, str] = {}
+    if (
+        commit.machine_spec_revision_id != run.spec_revision_id
+        or commit.control_ir_revision_id != run.control_ir_revision_id
+    ):
+        raise api_error(
+            "PROGRAM_COMMIT_BASELINE_MISMATCH",
+            "当前 Commit 未绑定到该生成任务的锁定规格和 Control IR",
+            409,
+            action="从当前生成分支创建带完整基线的新 Commit",
+        )
+    immutable_files: dict[str, str] = {}
     artifacts = session.scalars(
         select(ProgramArtifact).where(ProgramArtifact.generation_run_id == run.id).order_by(ProgramArtifact.path)
     ).all()
@@ -426,20 +556,42 @@ def generation_baseline(
             raise api_error("GENERATION_ARTIFACT_INVALID", f"生成工件 {item.path} 不是 UTF-8 文本", 422)
         if content_hash(text_value) != item.content_hash:
             raise api_error("GENERATION_ARTIFACT_HASH_MISMATCH", f"生成工件 {item.path} 哈希不匹配", 409, action="停止使用该基线并检查本机工件库")
-        files[item.path] = text_value
+        immutable_files[item.path] = text_value
     spec_revision = require_spec(session, run.spec_revision_id)
     locked = session.scalar(select(LockedMachineSpec).where(LockedMachineSpec.spec_revision_id == spec_revision.id))
     if locked is None or locked.content_hash != spec_revision.content_hash:
         raise api_error("LOCKED_SPEC_HASH_MISMATCH", "锁定 MachineSpec 基线不完整或哈希不匹配", 409)
     try:
-        if stable_json(json.loads(files["generated/ControlIR.json"])) != control_ir.data_json:
+        if stable_json(json.loads(immutable_files["generated/ControlIR.json"])) != control_ir.data_json:
             raise api_error("CONTROL_IR_ARTIFACT_MISMATCH", "Control IR 工件与数据库基线不一致", 409)
-        if stable_json(json.loads(files["tests/TestSpec.json"])) != test_spec.data_json:
+        if stable_json(json.loads(immutable_files["tests/TestSpec.json"])) != test_spec.data_json:
             raise api_error("TEST_SPEC_ARTIFACT_MISMATCH", "TestSpec 工件与数据库基线不一致", 409)
     except KeyError:
         raise api_error("GENERATION_BASELINE_INCOMPLETE", "生成任务缺少 Control IR 或 TestSpec 工件", 409)
     except json.JSONDecodeError:
         raise api_error("GENERATION_ARTIFACT_INVALID", "Control IR 或 TestSpec 工件不是有效 JSON", 422)
+    try:
+        repo = ensure_repository(settings, run.project_id)
+        files = {
+            path: read_file_at_commit(repo, commit.git_sha, path)
+            for path in list_files_at_commit(repo, commit.git_sha)
+        }
+    except (RepositoryError, UnicodeDecodeError) as exc:
+        raise api_error(
+            "PROGRAM_COMMIT_READ_FAILED",
+            f"无法读取当前 Commit 的源码树: {exc}",
+            409,
+            action="检查本地 Git 仓库完整性",
+        )
+    try:
+        if stable_json(json.loads(files["generated/ControlIR.json"])) != control_ir.data_json:
+            raise api_error("CONTROL_IR_COMMIT_MISMATCH", "当前 Commit 修改了不可变 Control IR", 409)
+        if stable_json(json.loads(files["tests/TestSpec.json"])) != test_spec.data_json:
+            raise api_error("TEST_SPEC_COMMIT_MISMATCH", "当前 Commit 修改了不可变 TestSpec", 409)
+    except KeyError:
+        raise api_error("PROGRAM_COMMIT_BASELINE_INCOMPLETE", "当前 Commit 缺少 Control IR 或 TestSpec", 409)
+    except json.JSONDecodeError:
+        raise api_error("PROGRAM_COMMIT_BASELINE_INVALID", "当前 Commit 的 Control IR 或 TestSpec 不是有效 JSON", 422)
     traces = session.scalars(select(TraceLink).where(TraceLink.generation_run_id == run.id)).all()
     bundle = GeneratedBundle(
         control_ir=json.loads(control_ir.data_json),
@@ -454,6 +606,99 @@ def generation_baseline(
         warnings=json.loads(run.warnings_json),
     )
     return json.loads(spec_revision.data_json), bundle, commit, test_spec
+
+
+def require_current_automated_review(
+    session: Session, run: GenerationRun, commit: ProgramCommit
+) -> AutomatedReviewRun:
+    review = session.scalar(
+        select(AutomatedReviewRun)
+        .where(
+            AutomatedReviewRun.generation_run_id == run.id,
+            AutomatedReviewRun.program_commit_id == commit.id,
+        )
+        .order_by(AutomatedReviewRun.created_at.desc())
+    )
+    if review is None:
+        raise api_error(
+            "AUTOMATED_REVIEW_REQUIRED",
+            "当前 Commit 尚未完成项目自动审核",
+            409,
+            action="基于当前 Commit 重新运行项目自动审核",
+        )
+    if review.status != "passed":
+        raise api_error(
+            "AUTOMATED_REVIEW_BLOCKED",
+            "当前 Commit 的项目自动审核存在 blocker",
+            409,
+            action="保留当前 Commit 和报告，修复后创建新 Commit",
+        )
+    return review
+
+
+def persist_generation_audit(
+    session: Session, settings: Settings, run: GenerationRun
+) -> tuple[GenerationAudit, bool]:
+    spec_data, bundle, commit, _test_spec = generation_baseline(
+        session, settings, run
+    )
+    report = audit_bundle(spec_data, bundle)
+    report["baseline"] = {
+        "program_commit_id": commit.id,
+        "git_sha": commit.git_sha,
+    }
+    audit_version = f"{report['audit_version']}:{commit.git_sha[:12]}"
+    report["audit_version"] = audit_version
+    existing = session.scalar(
+        select(GenerationAudit).where(
+            GenerationAudit.generation_run_id == run.id,
+            GenerationAudit.audit_version == audit_version,
+        )
+    )
+    if existing is not None:
+        if (
+            existing.input_hash == report["input_hash"]
+            and existing.program_commit_id == commit.id
+        ):
+            return existing, True
+        raise api_error(
+            "AUDIT_BASELINE_CONFLICT",
+            "同一不可变 Commit 的审计输入发生冲突",
+            409,
+            action="检查工件库和审计记录",
+        )
+    report_bytes = json.dumps(
+        report, ensure_ascii=False, sort_keys=True, indent=2
+    ).encode("utf-8")
+    artifact = store_bytes(
+        session,
+        settings,
+        report_bytes,
+        f"generation-audit-{run.id}-{commit.git_sha[:12]}.json",
+        "application/json",
+    )
+    item = GenerationAudit(
+        generation_run_id=run.id,
+        audit_version=audit_version,
+        input_hash=report["input_hash"],
+        status=report["status"],
+        findings_json=json.dumps(
+            report["findings"], ensure_ascii=False, sort_keys=True
+        ),
+        report_artifact_id=artifact.record.id,
+        program_commit_id=commit.id,
+    )
+    session.add(item)
+    session.flush()
+    audit(
+        session,
+        run.project_id,
+        "program.audit_completed",
+        "GenerationAudit",
+        item.id,
+        {"status": report["status"], "input_hash": report["input_hash"]},
+    )
+    return item, False
 
 
 def persist_automated_review(
@@ -695,33 +940,11 @@ def run_generation_audit(
     run = session.get(GenerationRun, run_id)
     if run is None:
         raise api_error("GENERATION_RUN_NOT_FOUND", "生成任务不存在", 404)
-    spec_data, bundle, baseline_commit, _test_spec = generation_baseline(session, runtime_settings, run)
-    report = audit_bundle(spec_data, bundle)
-    report["baseline"] = {"program_commit_id": baseline_commit.id, "git_sha": baseline_commit.git_sha}
-    audit_version = f"{report['audit_version']}:{baseline_commit.git_sha[:12]}"
-    report["audit_version"] = audit_version
-    existing = session.scalar(select(GenerationAudit).where(GenerationAudit.generation_run_id == run.id, GenerationAudit.audit_version == audit_version))
-    if existing is not None and existing.input_hash == report["input_hash"] and existing.program_commit_id == baseline_commit.id:
-        return audit_dict(existing)
-    report_bytes = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8")
-    artifact = store_bytes(session, runtime_settings, report_bytes, f"generation-audit-{run.id}.json", "application/json")
-    if existing is None:
-        existing = GenerationAudit(
-            generation_run_id=run.id,
-            audit_version=report["audit_version"],
-            input_hash=report["input_hash"],
-            status=report["status"],
-            findings_json=json.dumps(report["findings"], ensure_ascii=False, sort_keys=True),
-            report_artifact_id=artifact.record.id,
-            program_commit_id=baseline_commit.id,
-        )
-        session.add(existing)
-        session.flush()
-    else:
-        raise api_error("AUDIT_BASELINE_CONFLICT", "同一不可变 Commit 的审计输入发生冲突", 409, action="检查工件库和审计记录")
-    audit(session, run.project_id, "program.audit_completed", "GenerationAudit", existing.id, {"status": report["status"], "input_hash": report["input_hash"]})
+    existing, reused = persist_generation_audit(session, runtime_settings, run)
     session.commit()
-    return audit_dict(existing)
+    result = audit_dict(existing)
+    result["reused"] = reused
+    return result
 
 
 @router.get("/api/v1/generation-runs/{run_id}/audit")
@@ -729,9 +952,36 @@ def get_generation_audit(run_id: str, session: Session = Depends(app_session)) -
     run = session.get(GenerationRun, run_id)
     if run is None:
         raise api_error("GENERATION_RUN_NOT_FOUND", "生成任务不存在", 404)
-    item = session.scalar(select(GenerationAudit).where(GenerationAudit.generation_run_id == run.id).order_by(GenerationAudit.created_at.desc()))
+    branch = session.get(ProgramBranch, run.branch_id) if run.branch_id else None
+    commit = (
+        session.scalar(
+            select(ProgramCommit).where(
+                ProgramCommit.branch_id == branch.id,
+                ProgramCommit.git_sha == branch.head_commit
+            )
+        )
+        if branch and branch.head_commit
+        else None
+    )
+    item = (
+        session.scalar(
+            select(GenerationAudit)
+            .where(
+                GenerationAudit.generation_run_id == run.id,
+                GenerationAudit.program_commit_id == commit.id,
+            )
+            .order_by(GenerationAudit.created_at.desc())
+        )
+        if commit
+        else None
+    )
     if item is None:
-        raise api_error("AUDIT_NOT_FOUND", "尚未运行生成物自审计", 404, action="点击运行自审计")
+        raise api_error(
+            "AUDIT_NOT_FOUND",
+            "当前 Commit 尚未运行生成物自审计",
+            404,
+            action="对当前 Commit 运行自审计",
+        )
     return audit_dict(item)
 
 
@@ -809,32 +1059,7 @@ def create_compile_run(
     if generation.status != "review_ready" or not generation.control_ir_revision_id:
         raise api_error("GENERATION_NOT_READY", "生成物尚未完成确定性生成与审计，不能创建编译准备任务", 409, action="先在 P07 运行生成物自审计并处理 blocker")
     _spec_data, _bundle, baseline_commit, _test_spec = generation_baseline(session, runtime_settings, generation)
-    latest_review = session.scalar(
-        select(AutomatedReviewRun)
-        .where(AutomatedReviewRun.generation_run_id == generation.id)
-        .order_by(AutomatedReviewRun.created_at.desc())
-    )
-    if latest_review is None:
-        raise api_error(
-            "AUTOMATED_REVIEW_REQUIRED",
-            "创建编译准备任务前必须完成项目自动审核",
-            409,
-            action="重新运行项目自动审核",
-        )
-    if latest_review.program_commit_id != baseline_commit.id:
-        raise api_error(
-            "AUTOMATED_REVIEW_STALE",
-            "自动审核不是当前不可变 Commit 的结果",
-            409,
-            action="基于当前生成任务重新运行自动审核",
-        )
-    if latest_review.status == "blocked":
-        raise api_error(
-            "AUTOMATED_REVIEW_BLOCKED",
-            "项目自动审核存在 blocker，不能进入厂商编译准备",
-            409,
-            action="保留当前基线，修复后创建新的生成任务",
-        )
+    require_current_automated_review(session, generation, baseline_commit)
     try:
         adapter = descriptor(payload.adapter_id)
     except KeyError:
@@ -913,6 +1138,7 @@ def create_simulation_run(
         generation,
     )
     check_expected_revision(generation.revision, payload.expected_generation_revision, if_match)
+    require_current_automated_review(session, generation, baseline_commit)
     try:
         result = run_test_spec(baseline_bundle.control_ir, baseline_bundle.test_spec, payload.input_overrides, payload.max_cycles)
     except SimulationInputError as exc:
@@ -953,6 +1179,553 @@ def list_simulation_runs(project_id: str, session: Session = Depends(app_session
     require_project(session, project_id)
     items = session.scalars(select(SimulationRun).where(SimulationRun.project_id == project_id).order_by(SimulationRun.created_at.desc())).all()
     return [simulation_dict(session, item) for item in items]
+
+
+@router.post("/api/v1/projects/{project_id}/release-candidates", status_code=201)
+def create_release_candidate(
+    project_id: str,
+    payload: ReleaseCandidateRequest,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    project = require_project(session, project_id)
+    run = session.get(GenerationRun, payload.generation_run_id)
+    if run is None or run.project_id != project.id:
+        raise api_error("GENERATION_RUN_NOT_FOUND", "生成任务不存在或不属于当前项目", 404)
+    check_expected_revision(run.revision, payload.expected_generation_revision, if_match)
+    spec, bundle, commit, test_spec = generation_baseline(session, runtime_settings, run)
+    branch = require_branch(session, run.branch_id or "")
+    try:
+        repo = ensure_repository(runtime_settings, project.id)
+        if branch.status != "clean" or not is_working_tree_clean(repo):
+            raise api_error(
+                "PROGRAM_BRANCH_DIRTY",
+                "当前程序分支存在未提交修改，不能生成交付候选包",
+                409,
+                action="提交修改并完成当前 Commit 自动审核",
+            )
+    except RepositoryError as exc:
+        raise api_error("REPOSITORY_ERROR", str(exc), 422)
+
+    review = require_current_automated_review(session, run, commit)
+    static_audit, _audit_reused = persist_generation_audit(
+        session, runtime_settings, run
+    )
+    if static_audit.status == "blocked":
+        raise api_error(
+            "GENERATION_AUDIT_BLOCKED",
+            "当前 Commit 的确定性静态审计存在 blocker",
+            409,
+            action="保留报告，修复后创建新 Commit",
+        )
+    simulation = session.scalar(
+        select(SimulationRun)
+        .where(
+            SimulationRun.generation_run_id == run.id,
+            SimulationRun.program_commit_id == commit.id,
+            SimulationRun.status == "review_ready",
+        )
+        .order_by(SimulationRun.created_at.desc())
+    )
+    if simulation is None or not simulation.trace_artifact_id:
+        raise api_error(
+            "REFERENCE_SIMULATION_REQUIRED",
+            "当前 Commit 尚无通过的控谱参考逻辑模拟",
+            409,
+            action="在 P08 对当前 Commit 运行参考逻辑模拟",
+        )
+
+    revision = require_spec(session, run.spec_revision_id)
+    locked = session.scalar(
+        select(LockedMachineSpec).where(
+            LockedMachineSpec.spec_revision_id == revision.id
+        )
+    )
+    import_version = session.get(ImportVersion, revision.import_id)
+    if locked is None or import_version is None:
+        raise api_error("LOCKED_SPEC_REQUIRED", "锁定规格或原始导入记录不完整", 409)
+
+    entries: dict[str, bytes] = {}
+    artifact_inputs: list[dict[str, Any]] = []
+
+    def add_artifact_entry(path: str, artifact_id: str) -> None:
+        record, content = read_artifact_bytes(
+            session, runtime_settings, artifact_id
+        )
+        entries[path] = content
+        artifact_inputs.append(
+            {"path": path, "artifact_id": record.id, "sha256": record.sha256}
+        )
+
+    add_artifact_entry("spec/MachineSpec.locked.json", locked.snapshot_artifact_id)
+    add_artifact_entry("source/original.xlsx", import_version.source_artifact_id)
+    add_artifact_entry("evidence/automated-review.json", review.report_artifact_id)
+    if not static_audit.report_artifact_id:
+        raise api_error("GENERATION_AUDIT_INCOMPLETE", "静态审计报告工件缺失", 409)
+    add_artifact_entry("evidence/static-audit.json", static_audit.report_artifact_id)
+    add_artifact_entry("evidence/reference-simulation.json", simulation.trace_artifact_id)
+    for path, content in sorted(bundle.files.items()):
+        entries[f"program/{path}"] = content.encode("utf-8")
+
+    manual_evidence = session.execute(
+        select(EvidenceArtifact, SourceArtifact)
+        .join(CompileRun, EvidenceArtifact.compile_run_id == CompileRun.id)
+        .join(SourceArtifact, EvidenceArtifact.source_artifact_id == SourceArtifact.id)
+        .where(
+            CompileRun.project_id == project.id,
+            CompileRun.program_commit_id == commit.id,
+        )
+        .order_by(EvidenceArtifact.created_at, EvidenceArtifact.id)
+    ).all()
+    for index, (evidence, artifact) in enumerate(manual_evidence, start=1):
+        add_artifact_entry(
+            f"evidence/manual/{index:03d}-{evidence.evidence_kind}-{artifact.original_name}",
+            artifact.id,
+        )
+
+    input_record = {
+        "project_id": project.id,
+        "generation_run_id": run.id,
+        "program_commit_id": commit.id,
+        "git_sha": commit.git_sha,
+        "machine_spec_hash": revision.content_hash,
+        "control_ir_hash": content_hash(stable_json(bundle.control_ir)),
+        "test_spec_hash": test_spec.content_hash,
+        "automated_review_hash": review.input_hash,
+        "static_audit_hash": static_audit.input_hash,
+        "simulation_trace_artifact_id": simulation.trace_artifact_id,
+        "generator_version": run.generator_version,
+        "artifact_inputs": sorted(artifact_inputs, key=lambda item: item["path"]),
+        "entry_index": entry_index(entries),
+    }
+    input_hash = sha256_bytes(stable_json_bytes(input_record))
+    existing = session.scalar(
+        select(ReleaseCandidate).where(
+            ReleaseCandidate.project_id == project.id,
+            ReleaseCandidate.input_hash == input_hash,
+        )
+    )
+    if existing is not None:
+        session.rollback()
+        result = release_candidate_dict(session, existing)
+        result["reused"] = True
+        return result
+
+    next_number = (
+        session.scalar(
+            select(func.count()).select_from(ReleaseCandidate).where(
+                ReleaseCandidate.project_id == project.id
+            )
+        )
+        or 0
+    ) + 1
+    version = f"RC-{next_number:04d}"
+    manifest_seed = {
+        "candidate_version": version,
+        "status": "external_validation_required",
+        "verification_level": "automatic_package",
+        "project": {
+            "id": project.id,
+            "code": project.code,
+            "name": project.name,
+            "plc_target": {
+                "brand": project.plc_brand,
+                "series": project.plc_series,
+                "model": project.plc_model,
+            },
+        },
+        "baseline": input_record,
+        "external_validation_gates": json.loads(review.external_gates_json),
+        "claim_boundary": "该 ZIP 是自动验证后的交付候选包，不代表 GX Works3 编译、真实 PLC 硬件或电气工程师确认，禁止直接用于生产。",
+    }
+    try:
+        package, manifest = build_delivery_candidate(manifest_seed, entries)
+        verified_manifest = verify_delivery_candidate(package)
+    except DeliveryInputError as exc:
+        raise api_error("DELIVERY_PACKAGE_INVALID", str(exc), 422)
+    if verified_manifest != manifest:
+        raise api_error("DELIVERY_PACKAGE_INVALID", "候选包自校验结果不一致", 409)
+    package_artifact = store_bytes(
+        session,
+        runtime_settings,
+        package,
+        f"Kongpu-{project.code}-{version}.zip",
+        "application/zip",
+    )
+    manifest_hash = sha256_bytes(stable_json_bytes(manifest))
+    candidate = ReleaseCandidate(
+        project_id=project.id,
+        generation_run_id=run.id,
+        program_commit_id=commit.id,
+        automated_review_id=review.id,
+        version=version,
+        input_hash=input_hash,
+        manifest_hash=manifest_hash,
+        manifest_json=json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+        status="external_validation_required",
+        verification_level="automatic_package",
+        package_artifact_id=package_artifact.record.id,
+    )
+    session.add(candidate)
+    session.flush()
+    audit(
+        session,
+        project.id,
+        "release.candidate_created",
+        "ReleaseCandidate",
+        candidate.id,
+        {
+            "version": version,
+            "program_commit_id": commit.id,
+            "manifest_hash": manifest_hash,
+            "verification_level": "automatic_package",
+        },
+    )
+    session.commit()
+    result = release_candidate_dict(session, candidate)
+    result["reused"] = False
+    return result
+
+
+@router.get("/api/v1/projects/{project_id}/release-candidates")
+def list_release_candidates(
+    project_id: str, session: Session = Depends(app_session)
+) -> list[dict[str, Any]]:
+    require_project(session, project_id)
+    items = session.scalars(
+        select(ReleaseCandidate)
+        .where(ReleaseCandidate.project_id == project_id)
+        .order_by(ReleaseCandidate.created_at.desc())
+    ).all()
+    return [release_candidate_dict(session, item) for item in items]
+
+
+@router.get("/api/v1/release-candidates/{candidate_id}")
+def get_release_candidate(
+    candidate_id: str, session: Session = Depends(app_session)
+) -> dict[str, Any]:
+    item = session.get(ReleaseCandidate, candidate_id)
+    if item is None:
+        raise api_error("RELEASE_CANDIDATE_NOT_FOUND", "交付候选包不存在", 404)
+    return release_candidate_dict(session, item)
+
+
+@router.post("/api/v1/projects/{project_id}/monitoring-plans", status_code=201)
+def create_monitoring_plan(
+    project_id: str,
+    payload: MonitoringPlanRequest,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    project = require_project(session, project_id)
+    candidate = session.get(ReleaseCandidate, payload.release_candidate_id)
+    if candidate is None or candidate.project_id != project.id:
+        raise api_error("RELEASE_CANDIDATE_NOT_FOUND", "交付候选包不存在或不属于当前项目", 404)
+    check_expected_revision(candidate.revision, payload.expected_candidate_revision, if_match)
+    existing = session.scalar(
+        select(MonitoringPlan).where(
+            MonitoringPlan.release_candidate_id == candidate.id
+        )
+    )
+    if existing is not None:
+        result = monitoring_plan_dict(session, existing)
+        result["reused"] = True
+        return result
+    run = session.get(GenerationRun, candidate.generation_run_id)
+    if run is None or not run.control_ir_revision_id:
+        raise api_error("CONTROL_IR_NOT_FOUND", "候选包缺少 Control IR 基线", 409)
+    control_ir = session.get(ControlIRRevision, run.control_ir_revision_id)
+    if control_ir is None or content_hash(control_ir.data_json) != control_ir.content_hash:
+        raise api_error("CONTROL_IR_HASH_MISMATCH", "Control IR 基线哈希不匹配", 409)
+    variables = build_variable_map(json.loads(control_ir.data_json))
+    fingerprint = target_fingerprint(
+        project_id=project.id,
+        plc_brand=project.plc_brand,
+        plc_series=project.plc_series,
+        plc_model=project.plc_model,
+        candidate_manifest_hash=candidate.manifest_hash,
+        variables=variables,
+    )
+    item = MonitoringPlan(
+        project_id=project.id,
+        release_candidate_id=candidate.id,
+        target_fingerprint=fingerprint,
+        variable_map_hash=variable_map_hash(variables),
+        variable_map_json=json.dumps(variables, ensure_ascii=False, sort_keys=True),
+        status="awaiting_external_read_only_connection",
+        verification_level="unverified",
+    )
+    session.add(item)
+    session.flush()
+    audit(
+        session, project.id, "monitoring.plan_created", "MonitoringPlan", item.id,
+        {"release_candidate_id": candidate.id, "access": "read_only"},
+    )
+    session.commit()
+    result = monitoring_plan_dict(session, item)
+    result["reused"] = False
+    return result
+
+
+@router.get("/api/v1/projects/{project_id}/monitoring-plans")
+def list_monitoring_plans(
+    project_id: str, session: Session = Depends(app_session)
+) -> list[dict[str, Any]]:
+    require_project(session, project_id)
+    items = session.scalars(
+        select(MonitoringPlan)
+        .where(MonitoringPlan.project_id == project_id)
+        .order_by(MonitoringPlan.created_at.desc())
+    ).all()
+    return [monitoring_plan_dict(session, item) for item in items]
+
+
+@router.get("/api/v1/monitoring-plans/{plan_id}")
+def get_monitoring_plan(
+    plan_id: str, session: Session = Depends(app_session)
+) -> dict[str, Any]:
+    item = session.get(MonitoringPlan, plan_id)
+    if item is None:
+        raise api_error("MONITORING_PLAN_NOT_FOUND", "只读监控计划不存在", 404)
+    return monitoring_plan_dict(session, item)
+
+
+@router.post("/api/v1/monitoring-plans/{plan_id}/snapshots", status_code=201)
+def create_monitoring_snapshot(
+    plan_id: str,
+    payload: MonitoringSnapshotRequest,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    plan = session.get(MonitoringPlan, plan_id)
+    if plan is None:
+        raise api_error("MONITORING_PLAN_NOT_FOUND", "只读监控计划不存在", 404)
+    check_expected_revision(plan.revision, payload.expected_plan_revision, if_match)
+    if payload.observed_target_fingerprint != plan.target_fingerprint:
+        raise api_error(
+            "MONITORING_TARGET_MISMATCH",
+            "离线快照的目标指纹与候选包不一致",
+            409,
+            action="停止分析并核对项目、PLC 目标、候选 Manifest 和变量映射",
+        )
+    candidate = session.get(ReleaseCandidate, plan.release_candidate_id)
+    run = session.get(GenerationRun, candidate.generation_run_id) if candidate else None
+    control_ir = (
+        session.get(ControlIRRevision, run.control_ir_revision_id)
+        if run and run.control_ir_revision_id
+        else None
+    )
+    if control_ir is None or content_hash(control_ir.data_json) != control_ir.content_hash:
+        raise api_error("CONTROL_IR_HASH_MISMATCH", "Control IR 基线不可用", 409)
+    variables = json.loads(plan.variable_map_json)
+    if variable_map_hash(variables) != plan.variable_map_hash:
+        raise api_error("VARIABLE_MAP_HASH_MISMATCH", "只读变量映射哈希不匹配", 409)
+    try:
+        analysis = analyze_snapshot(
+            json.loads(control_ir.data_json),
+            variables,
+            payload.values,
+            payload.current_step_id,
+        )
+    except MonitoringInputError as exc:
+        raise api_error("MONITORING_SNAPSHOT_INVALID", str(exc), 422)
+    original = {
+        "schema": "kongpu-offline-monitoring-snapshot/v1",
+        "monitoring_plan_id": plan.id,
+        "release_candidate_id": plan.release_candidate_id,
+        "observed_target_fingerprint": payload.observed_target_fingerprint,
+        "values": payload.values,
+        "current_step_id": payload.current_step_id,
+        "note": payload.note,
+        "analysis": analysis,
+    }
+    stored = store_bytes(
+        session,
+        runtime_settings,
+        stable_json_bytes(original),
+        f"monitoring-snapshot-{plan.id}-{new_id()[:8]}.json",
+        "application/json",
+    )
+    evidence = MonitoringEvidence(
+        project_id=plan.project_id,
+        monitoring_plan_id=plan.id,
+        source_artifact_id=stored.record.id,
+        status=analysis["status"],
+        verification_level="manual_unverified",
+        analysis_json=json.dumps(analysis, ensure_ascii=False, sort_keys=True),
+        note=payload.note,
+    )
+    session.add(evidence)
+    session.flush()
+    plan.revision += 1
+    audit(
+        session, plan.project_id, "monitoring.snapshot_recorded",
+        "MonitoringEvidence", evidence.id,
+        {"sha256": stored.record.sha256, "status": evidence.status},
+    )
+    session.commit()
+    return monitoring_evidence_dict(session, evidence)
+
+
+@router.get("/api/v1/monitoring-plans/{plan_id}/evidence")
+def list_monitoring_evidence(
+    plan_id: str, session: Session = Depends(app_session)
+) -> list[dict[str, Any]]:
+    plan = session.get(MonitoringPlan, plan_id)
+    if plan is None:
+        raise api_error("MONITORING_PLAN_NOT_FOUND", "只读监控计划不存在", 404)
+    items = session.scalars(
+        select(MonitoringEvidence)
+        .where(MonitoringEvidence.monitoring_plan_id == plan.id)
+        .order_by(MonitoringEvidence.created_at.desc())
+    ).all()
+    return [monitoring_evidence_dict(session, item) for item in items]
+
+
+@router.post("/api/v1/monitoring-evidence/{evidence_id}/commissioning-tasks", status_code=201)
+def create_commissioning_task(
+    evidence_id: str,
+    payload: CommissioningTaskRequest,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    evidence = session.get(MonitoringEvidence, evidence_id)
+    if evidence is None:
+        raise api_error("MONITORING_EVIDENCE_NOT_FOUND", "离线监控证据不存在", 404)
+    plan = session.get(MonitoringPlan, evidence.monitoring_plan_id)
+    if plan is None:
+        raise api_error("MONITORING_PLAN_NOT_FOUND", "只读监控计划不存在", 404)
+    check_expected_revision(plan.revision, payload.expected_plan_revision, if_match)
+    existing = session.scalar(
+        select(CommissioningTask).where(
+            CommissioningTask.monitoring_evidence_id == evidence.id
+        )
+    )
+    if existing is not None:
+        return commissioning_task_dict(existing)
+    candidate = session.get(ReleaseCandidate, plan.release_candidate_id)
+    source_run = (
+        session.get(GenerationRun, candidate.generation_run_id)
+        if candidate
+        else None
+    )
+    source_commit = (
+        session.get(ProgramCommit, candidate.program_commit_id)
+        if candidate
+        else None
+    )
+    if (
+        candidate is None
+        or source_run is None
+        or source_commit is None
+        or not source_run.control_ir_revision_id
+    ):
+        raise api_error("RELEASE_BASELINE_INCOMPLETE", "候选包程序基线不完整", 409)
+    workspace, repo = workspace_for_project(
+        session, runtime_settings, evidence.project_id
+    )
+    branch_name = f"engineer/commissioning-{evidence.id[:8]}"
+    duplicate = session.scalar(
+        select(ProgramBranch).where(
+            ProgramBranch.workspace_id == workspace.id,
+            ProgramBranch.name == branch_name,
+        )
+    )
+    if duplicate is not None:
+        raise api_error("COMMISSIONING_BRANCH_CONFLICT", "调试分支已存在但任务记录缺失", 409)
+    try:
+        if not is_working_tree_clean(repo):
+            raise api_error("PROGRAM_BRANCH_DIRTY", "程序仓库存在未提交修改", 409)
+        checkout_branch(repo, branch_name, source_commit.git_sha)
+    except RepositoryError as exc:
+        raise api_error("REPOSITORY_ERROR", str(exc), 422)
+    branch = ProgramBranch(
+        workspace_id=workspace.id,
+        name=branch_name,
+        git_ref=f"refs/heads/{branch_name}",
+        base_commit=source_commit.git_sha,
+        head_commit=source_commit.git_sha,
+        status="clean",
+    )
+    session.add(branch)
+    session.flush()
+    derived_run = GenerationRun(
+        project_id=evidence.project_id,
+        spec_revision_id=source_run.spec_revision_id,
+        branch_id=branch.id,
+        control_ir_revision_id=source_run.control_ir_revision_id,
+        generator_version=source_run.generator_version,
+        status="review_ready",
+        warnings_json=source_run.warnings_json,
+    )
+    session.add(derived_run)
+    session.flush()
+    source_test_spec = session.scalar(
+        select(TestSpecRevision).where(
+            TestSpecRevision.generation_run_id == source_run.id
+        )
+    )
+    if source_test_spec is None:
+        raise api_error("TEST_SPEC_NOT_FOUND", "候选包 TestSpec 基线缺失", 409)
+    session.add(
+        TestSpecRevision(
+            generation_run_id=derived_run.id,
+            content_hash=source_test_spec.content_hash,
+            data_json=source_test_spec.data_json,
+        )
+    )
+    for item in session.scalars(
+        select(ProgramArtifact).where(
+            ProgramArtifact.generation_run_id == source_run.id
+        )
+    ).all():
+        session.add(
+            ProgramArtifact(
+                generation_run_id=derived_run.id,
+                path=item.path, kind=item.kind,
+                content_hash=item.content_hash,
+                source_artifact_id=item.source_artifact_id,
+            )
+        )
+    for item in session.scalars(
+        select(TraceLink).where(TraceLink.generation_run_id == source_run.id)
+    ).all():
+        session.add(
+            TraceLink(
+                generation_run_id=derived_run.id,
+                output_path=item.output_path, output_symbol=item.output_symbol,
+                output_line=item.output_line, entity_type=item.entity_type,
+                entity_id=item.entity_id, source_sheet=item.source_sheet,
+                source_row=item.source_row,
+            )
+        )
+    task = CommissioningTask(
+        project_id=evidence.project_id,
+        monitoring_evidence_id=evidence.id,
+        branch_id=branch.id,
+        generation_run_id=derived_run.id,
+        description=payload.description,
+        status="open",
+    )
+    session.add(task)
+    session.flush()
+    plan.revision += 1
+    workspace.revision += 1
+    audit(
+        session, evidence.project_id, "commissioning.task_created",
+        "CommissioningTask", task.id,
+        {
+            "release_candidate_id": candidate.id,
+            "base_commit": source_commit.git_sha,
+            "branch": branch_name,
+            "access": "offline_branch_only",
+        },
+    )
+    session.commit()
+    return commissioning_task_dict(task)
 
 
 @router.get("/api/v1/schemas/machine-spec/v1")
@@ -1689,6 +2462,14 @@ def update_branch_file(
 ) -> dict[str, Any]:
     branch = require_branch(session, branch_id)
     check_expected_revision(branch.revision, payload.expected_revision, if_match)
+    normalized_path = path.replace("\\", "/").lstrip("/")
+    if normalized_path in {"generated/ControlIR.json", "tests/TestSpec.json"}:
+        raise api_error(
+            "IMMUTABLE_GENERATION_BASELINE",
+            "Control IR 和 TestSpec 属于不可变生成基线，不能手工编辑",
+            409,
+            action="修改锁定 MachineSpec 后创建新的生成任务",
+        )
     workspace, repo = branch_repository(session, runtime_settings, branch)
     try:
         write_files(repo, {path: payload.content})
@@ -1733,12 +2514,25 @@ def create_program_commit(
         machine_spec_revision_id=None,
         control_ir_revision_id=None,
     )
+    generation = session.scalar(
+        select(GenerationRun).where(GenerationRun.branch_id == branch.id)
+    )
+    if generation is None or not generation.control_ir_revision_id:
+        raise api_error(
+            "GENERATION_BASELINE_INCOMPLETE",
+            "当前分支没有可继承的生成基线",
+            409,
+        )
+    commit.machine_spec_revision_id = generation.spec_revision_id
+    commit.control_ir_revision_id = generation.control_ir_revision_id
     session.add(commit)
     session.flush()
     branch.head_commit = sha
     branch.status = "clean"
     branch.revision += 1
+    generation.revision += 1
     audit(session, workspace.project_id, "program.committed", "ProgramCommit", commit.id, {"git_sha": sha})
+    persist_automated_review(session, runtime_settings, generation, repeat_count=20)
     session.commit()
     return commit_dict(commit)
 

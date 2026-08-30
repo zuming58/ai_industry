@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from kongpu_api.generator import generate_bundle
+from kongpu_api.models import ProgramBranch, ProgramCommit, ProgramWorkspace
 from kongpu_api.repository import RepositoryError, safe_file
 
 
@@ -98,6 +100,153 @@ def test_generation_edit_commit_and_diff(
     assert traversal.status_code in {404, 422}
 
 
+def test_each_program_commit_gets_independent_review_and_current_binding(
+    client: TestClient,
+    project: dict,
+    locked_example: dict,
+) -> None:
+    generated = client.post(
+        f"/api/v1/projects/{project['id']}/generation-runs",
+        json={
+            "spec_revision_id": locked_example["revision"]["id"],
+            "branch_name": "generated/commit-review-binding",
+        },
+    )
+    assert generated.status_code == 201, generated.text
+    run = generated.json()
+    branch_id = run["branch_id"]
+    initial_reviews = client.get(
+        f"/api/v1/projects/{project['id']}/automated-reviews"
+    ).json()
+    assert len(initial_reviews) == 1
+    initial_commit_id = initial_reviews[0]["program_commit_id"]
+
+    immutable = client.patch(
+        f"/api/v1/branches/{branch_id}/files/generated/ControlIR.json",
+        json={
+            "content": "{}",
+            "reason": "不应允许修改",
+            "expected_revision": client.get(
+                f"/api/v1/branches/{branch_id}/files"
+            ).json()["branch"]["revision"],
+        },
+    )
+    assert immutable.status_code == 409
+    assert immutable.json()["code"] == "IMMUTABLE_GENERATION_BASELINE"
+
+    source = client.get(
+        f"/api/v1/branches/{branch_id}/files/src/PRG_AutoCycle.st"
+    ).json()["content"]
+    branch = client.get(f"/api/v1/branches/{branch_id}/files").json()["branch"]
+    edited = client.patch(
+        f"/api/v1/branches/{branch_id}/files/src/PRG_AutoCycle.st",
+        json={
+            "content": source + "\n// Deterministic local review note.\n",
+            "reason": "增加不改变逻辑的审阅注释",
+            "expected_revision": branch["revision"],
+        },
+    )
+    assert edited.status_code == 200, edited.text
+    legal_commit = client.post(
+        f"/api/v1/branches/{branch_id}/commits",
+        json={
+            "message": "Add reviewed source comment",
+            "author": "自动测试",
+            "expected_revision": edited.json()["branch"]["revision"],
+        },
+    )
+    assert legal_commit.status_code == 201, legal_commit.text
+    legal_commit_id = legal_commit.json()["id"]
+    assert legal_commit_id != initial_commit_id
+
+    reviews = client.get(
+        f"/api/v1/projects/{project['id']}/automated-reviews"
+    ).json()
+    legal_review = next(
+        item for item in reviews if item["program_commit_id"] == legal_commit_id
+    )
+    assert legal_review["status"] == "passed"
+    assert len(reviews) == 2
+
+    current_run = client.get(f"/api/v1/generation-runs/{run['id']}").json()
+    compile_run = client.post(
+        f"/api/v1/projects/{project['id']}/compile-runs",
+        json={
+            "generation_run_id": run["id"],
+            "adapter_id": "gxworks3",
+            "expected_generation_revision": current_run["revision"],
+        },
+    )
+    assert compile_run.status_code == 201, compile_run.text
+    assert compile_run.json()["program_commit_id"] == legal_commit_id
+    simulation = client.post(
+        f"/api/v1/projects/{project['id']}/simulation-runs",
+        json={
+            "generation_run_id": run["id"],
+            "expected_generation_revision": current_run["revision"],
+        },
+    )
+    assert simulation.status_code == 201, simulation.text
+    assert simulation.json()["program_commit_id"] == legal_commit_id
+
+    branch = client.get(f"/api/v1/branches/{branch_id}/files").json()["branch"]
+    dangerous = client.patch(
+        f"/api/v1/branches/{branch_id}/files/src/PRG_AutoCycle.st",
+        json={
+            "content": source + "\nDOWNLOAD();\nKONGPU_UNDEFINED := TRUE;\n",
+            "reason": "植入应被自动审核拦截的危险操作",
+            "expected_revision": branch["revision"],
+        },
+    )
+    assert dangerous.status_code == 200, dangerous.text
+    blocked_commit = client.post(
+        f"/api/v1/branches/{branch_id}/commits",
+        json={
+            "message": "Inject automatic-review regression defects",
+            "author": "自动测试",
+            "expected_revision": dangerous.json()["branch"]["revision"],
+        },
+    )
+    assert blocked_commit.status_code == 201, blocked_commit.text
+    blocked_commit_id = blocked_commit.json()["id"]
+    blocked_review = next(
+        item
+        for item in client.get(
+            f"/api/v1/projects/{project['id']}/automated-reviews"
+        ).json()
+        if item["program_commit_id"] == blocked_commit_id
+    )
+    assert blocked_review["status"] == "blocked"
+    static_check = next(
+        item
+        for item in blocked_review["checks"]
+        if item["id"] == "generation_static_audit"
+    )
+    assert static_check["status"] == "failed"
+
+    current_run = client.get(f"/api/v1/generation-runs/{run['id']}").json()
+    for endpoint, payload in (
+        (
+            f"/api/v1/projects/{project['id']}/compile-runs",
+            {
+                "generation_run_id": run["id"],
+                "adapter_id": "gxworks3",
+                "expected_generation_revision": current_run["revision"],
+            },
+        ),
+        (
+            f"/api/v1/projects/{project['id']}/simulation-runs",
+            {
+                "generation_run_id": run["id"],
+                "expected_generation_revision": current_run["revision"],
+            },
+        ),
+    ):
+        rejected = client.post(endpoint, json=payload)
+        assert rejected.status_code == 409
+        assert rejected.json()["code"] == "AUTOMATED_REVIEW_BLOCKED"
+
+
 def test_repository_path_guard(tmp_path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -107,3 +256,58 @@ def test_repository_path_guard(tmp_path) -> None:
         pass
     else:
         raise AssertionError("path traversal should be rejected")
+
+
+def test_identical_git_sha_is_scoped_to_program_branch(
+    client: TestClient, project: dict
+) -> None:
+    second = client.post(
+        "/api/v1/projects",
+        json={"name": "第二个独立项目", "customer_code": "CUST-002"},
+    )
+    assert second.status_code == 201, second.text
+
+    with client.app.state.database.session_factory() as session:
+        first_workspace = ProgramWorkspace(
+            project_id=project["id"], repository_path=project["id"]
+        )
+        second_workspace = ProgramWorkspace(
+            project_id=second.json()["id"], repository_path=second.json()["id"]
+        )
+        session.add_all([first_workspace, second_workspace])
+        session.flush()
+        first_branch = ProgramBranch(
+            workspace_id=first_workspace.id,
+            name="generated/same-tree",
+            git_ref="refs/heads/generated/same-tree",
+        )
+        second_branch = ProgramBranch(
+            workspace_id=second_workspace.id,
+            name="generated/same-tree",
+            git_ref="refs/heads/generated/same-tree",
+        )
+        session.add_all([first_branch, second_branch])
+        session.flush()
+        shared_sha = "a" * 40
+        session.add_all(
+            [
+                ProgramCommit(
+                    branch_id=first_branch.id,
+                    git_sha=shared_sha,
+                    message="Same deterministic tree",
+                ),
+                ProgramCommit(
+                    branch_id=second_branch.id,
+                    git_sha=shared_sha,
+                    message="Same deterministic tree",
+                ),
+            ]
+        )
+        session.commit()
+        commits = session.scalars(
+            select(ProgramCommit).where(ProgramCommit.git_sha == shared_sha)
+        ).all()
+        assert {item.branch_id for item in commits} == {
+            first_branch.id,
+            second_branch.id,
+        }

@@ -72,7 +72,6 @@ def _baseline_fingerprint(bundle: GeneratedBundle) -> str:
         stable_json(
             {
                 "control_ir": bundle.control_ir,
-                "files": bundle.files,
                 "test_spec": bundle.test_spec,
                 "warnings": bundle.warnings,
             }
@@ -239,16 +238,16 @@ def run_automated_review(
     checks.append(
         _check(
             "immutable_baseline",
-            "不可变生成基线完整性",
+            "不可变规格与生成元数据完整性",
             baseline_match,
-            "锁定规格重新生成结果与内容寻址基线一致。" if baseline_match else "当前生成工件与锁定规格重新生成结果不一致。",
+            "Control IR、TestSpec 与锁定规格重新生成结果一致；当前 Commit 源码已独立审计。" if baseline_match else "Control IR、TestSpec 或生成元数据与锁定规格不一致。",
             evidence={
                 "baseline_hash": _baseline_fingerprint(baseline),
                 "regenerated_hash": _baseline_fingerprint(expected),
                 "program_commit_id": program_commit_id,
                 "git_sha": program_git_sha,
             },
-            action=None if baseline_match else "停止使用该基线，检查生成器版本和工件库",
+            action=None if baseline_match else "停止使用该基线，检查生成器版本、Control IR、TestSpec 和工件库",
         )
     )
 

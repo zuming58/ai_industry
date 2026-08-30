@@ -92,3 +92,26 @@ class AutomatedReviewRequest(BaseModel):
     generation_run_id: str
     repeat_count: int = Field(default=20, ge=2, le=50)
     expected_generation_revision: int = Field(ge=1)
+
+
+class ReleaseCandidateRequest(BaseModel):
+    generation_run_id: str
+    expected_generation_revision: int = Field(ge=1)
+
+
+class MonitoringPlanRequest(BaseModel):
+    release_candidate_id: str
+    expected_candidate_revision: int = Field(ge=1)
+
+
+class MonitoringSnapshotRequest(BaseModel):
+    observed_target_fingerprint: str = Field(min_length=64, max_length=64)
+    values: dict[str, bool | int | float] = Field(default_factory=dict, max_length=5000)
+    current_step_id: str | None = Field(default=None, max_length=160)
+    note: str | None = Field(default=None, max_length=2000)
+    expected_plan_revision: int = Field(ge=1)
+
+
+class CommissioningTaskRequest(BaseModel):
+    description: str = Field(min_length=3, max_length=2000)
+    expected_plan_revision: int = Field(ge=1)

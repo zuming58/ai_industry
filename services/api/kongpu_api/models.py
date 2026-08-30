@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -246,10 +246,18 @@ class TraceLink(Base):
 
 class ProgramCommit(Base):
     __tablename__ = "program_commits"
+    __table_args__ = (
+        Index(
+            "uq_program_commit_branch_sha",
+            "branch_id",
+            "git_sha",
+            unique=True,
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     branch_id: Mapped[str] = mapped_column(ForeignKey("program_branches.id", ondelete="CASCADE"), index=True)
-    git_sha: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    git_sha: Mapped[str] = mapped_column(String(64), index=True)
     message: Mapped[str] = mapped_column(String(240))
     author: Mapped[str] = mapped_column(String(120), default="本机工程师")
     machine_spec_revision_id: Mapped[str | None] = mapped_column(ForeignKey("machine_spec_revisions.id"))
@@ -372,3 +380,66 @@ class SimulationTrace(Base):
     inputs_json: Mapped[str] = mapped_column(Text, default="{}")
     outputs_json: Mapped[str] = mapped_column(Text, default="{}")
     events_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
+class ReleaseCandidate(Base, TimestampMixin):
+    __tablename__ = "release_candidates"
+    __table_args__ = (
+        UniqueConstraint("project_id", "input_hash", name="uq_release_candidate_input"),
+        UniqueConstraint("project_id", "version", name="uq_release_candidate_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    generation_run_id: Mapped[str] = mapped_column(ForeignKey("generation_runs.id"), index=True)
+    program_commit_id: Mapped[str] = mapped_column(ForeignKey("program_commits.id"), index=True)
+    automated_review_id: Mapped[str] = mapped_column(ForeignKey("automated_review_runs.id"), index=True)
+    version: Mapped[str] = mapped_column(String(40))
+    input_hash: Mapped[str] = mapped_column(String(64), index=True)
+    manifest_hash: Mapped[str] = mapped_column(String(64), index=True)
+    manifest_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="external_validation_required", index=True)
+    verification_level: Mapped[str] = mapped_column(String(40), default="automatic_package")
+    package_artifact_id: Mapped[str] = mapped_column(ForeignKey("source_artifacts.id"))
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class MonitoringPlan(Base, TimestampMixin):
+    __tablename__ = "monitoring_plans"
+    __table_args__ = (UniqueConstraint("release_candidate_id", name="uq_monitoring_plan_candidate"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    release_candidate_id: Mapped[str] = mapped_column(ForeignKey("release_candidates.id"), index=True)
+    target_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    variable_map_hash: Mapped[str] = mapped_column(String(64), index=True)
+    variable_map_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(48), default="awaiting_external_read_only_connection", index=True)
+    verification_level: Mapped[str] = mapped_column(String(40), default="unverified")
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class MonitoringEvidence(Base, TimestampMixin):
+    __tablename__ = "monitoring_evidence"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    monitoring_plan_id: Mapped[str] = mapped_column(ForeignKey("monitoring_plans.id", ondelete="CASCADE"), index=True)
+    source_artifact_id: Mapped[str] = mapped_column(ForeignKey("source_artifacts.id"))
+    status: Mapped[str] = mapped_column(String(40), default="recorded_unverified", index=True)
+    verification_level: Mapped[str] = mapped_column(String(40), default="manual_unverified")
+    analysis_json: Mapped[str] = mapped_column(Text, default="{}")
+    note: Mapped[str | None] = mapped_column(Text)
+
+
+class CommissioningTask(Base, TimestampMixin):
+    __tablename__ = "commissioning_tasks"
+    __table_args__ = (UniqueConstraint("monitoring_evidence_id", name="uq_commissioning_task_evidence"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    monitoring_evidence_id: Mapped[str] = mapped_column(ForeignKey("monitoring_evidence.id"), index=True)
+    branch_id: Mapped[str] = mapped_column(ForeignKey("program_branches.id"), index=True)
+    generation_run_id: Mapped[str] = mapped_column(ForeignKey("generation_runs.id"), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="open", index=True)

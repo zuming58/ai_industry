@@ -194,6 +194,38 @@ def test_audit_detects_undefined_reference_and_forbidden_operation(locked_exampl
     assert report["status"] == "blocked"
 
 
+def test_audit_ignores_prohibited_words_in_st_comments_and_strings(locked_example: dict) -> None:
+    spec = locked_example["revision"]["data"]
+    bundle = generate_bundle(spec)
+    program = bundle.files["src/PRG_AutoCycle.st"] + (
+        "\n// DOWNLOAD(); FORCED_OUTPUT\n"
+        "(* DOWNLOAD();\nFORCED_OUTPUT *)\n"
+        "/* DOWNLOAD(); */\n"
+        "KP_Note := 'DOWNLOAD(); FORCED_OUTPUT';\n"
+    )
+    commented = type(bundle)(
+        bundle.control_ir,
+        {**bundle.files, "src/PRG_AutoCycle.st": program},
+        bundle.test_spec,
+        bundle.trace_links,
+        bundle.warnings,
+    )
+    codes = {item["code"] for item in audit_bundle(spec, commented)["findings"]}
+    assert "FORBIDDEN_CONTROL_OPERATION" not in codes
+
+    executable = type(bundle)(
+        bundle.control_ir,
+        {**bundle.files, "src/PRG_AutoCycle.st": program + "\nDOWNLOAD();\n"},
+        bundle.test_spec,
+        bundle.trace_links,
+        bundle.warnings,
+    )
+    executable_codes = {
+        item["code"] for item in audit_bundle(spec, executable)["findings"]
+    }
+    assert "FORBIDDEN_CONTROL_OPERATION" in executable_codes
+
+
 def test_audit_detects_loop_target_and_missing_interlock_coverage(locked_example: dict) -> None:
     spec = locked_example["revision"]["data"]
     bundle = generate_bundle(spec)

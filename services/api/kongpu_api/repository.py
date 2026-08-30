@@ -30,6 +30,19 @@ def _run(repo: Path, *args: str, check: bool = True) -> str:
     return completed.stdout.strip()
 
 
+def _run_bytes(repo: Path, *args: str) -> bytes:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise RepositoryError(message or "Git command failed")
+    return completed.stdout
+
+
 def repository_path(settings: Settings, project_id: str) -> Path:
     root = settings.repository_dir.resolve()
     path = (root / project_id).resolve()
@@ -88,6 +101,36 @@ def read_file(repo: Path, relative: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _verified_commit(repo: Path, sha: str) -> str:
+    if not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha):
+        raise RepositoryError("Invalid Git commit id")
+    resolved = _run(repo, "rev-parse", "--verify", f"{sha}^{{commit}}")
+    if not re.fullmatch(r"[0-9a-f]{40,64}", resolved):
+        raise RepositoryError("Git commit could not be resolved")
+    return resolved
+
+
+def list_files_at_commit(repo: Path, sha: str) -> list[str]:
+    resolved = _verified_commit(repo, sha)
+    output = _run_bytes(repo, "ls-tree", "-r", "--name-only", "-z", resolved)
+    paths = [
+        value.decode("utf-8", errors="strict")
+        for value in output.split(b"\0")
+        if value
+    ]
+    for path in paths:
+        safe_file(repo, path)
+    return sorted(paths)
+
+
+def read_file_at_commit(repo: Path, sha: str, relative: str) -> str:
+    resolved = _verified_commit(repo, sha)
+    normalized = safe_file(repo, relative).relative_to(repo.resolve()).as_posix()
+    return _run_bytes(repo, "show", f"{resolved}:{normalized}").decode(
+        "utf-8", errors="strict"
+    )
+
+
 def list_files(repo: Path) -> list[dict[str, object]]:
     result = []
     for path in sorted(item for item in repo.rglob("*") if item.is_file() and ".git" not in item.parts):
@@ -113,3 +156,7 @@ def commit_diff(repo: Path, sha: str) -> str:
 def parent_of(repo: Path, sha: str) -> str | None:
     value = _run(repo, "rev-parse", f"{sha}^", check=False)
     return value or None
+
+
+def is_working_tree_clean(repo: Path) -> bool:
+    return not bool(_run(repo, "status", "--porcelain"))
