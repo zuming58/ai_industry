@@ -164,16 +164,21 @@ export type TemplateVersionHistory = {
 };
 
 export type CompatibilityEntry = {
+  profile_id: string;
   target: { brand: string; series: string; model: string };
+  program_language: string;
+  adapter_id: string;
+  vendor_tool: string;
   machine_spec: string;
   structured_text_generation: string;
+  static_audit: string;
   reference_simulation: string;
-  gx_works3_compile: string;
-  gx_simulator3: string;
-  mx_component: string;
+  vendor_compile: string;
+  vendor_simulation: string;
   hardware: string;
   electrical_review: string;
   safety_plc: string;
+  claim_boundary: string;
 };
 
 export type CompatibilityMatrix = {

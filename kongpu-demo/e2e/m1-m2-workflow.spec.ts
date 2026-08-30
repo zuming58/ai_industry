@@ -68,7 +68,7 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
 
   await page.getByRole("link", { name: "P06 程序工程" }).click();
   await page.locator(".real-empty").getByRole("button", { name: "生成程序" }).click();
-  await expect(page.getByText("已生成确定性 FX5U ST 骨架和 TestSpec")).toBeVisible();
+  await expect(page.getByText("已生成确定性 ST 骨架和 TestSpec；厂商编译未验证")).toBeVisible();
   await expect(page.getByRole("heading", { name: "程序树" })).toBeVisible();
   const editor = page.locator(".code-editor");
   await expect(editor).toHaveValue(/PROGRAM PRG_AutoCycle/);
@@ -164,7 +164,7 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expectNoHorizontalOverflow(page);
 
   await page.getByRole("link", { name: "P11 版本" }).click();
-  const baseCommitOption = page.getByLabel("基线 Commit").locator("option").filter({ hasText: "Generate FX5U ST" }).first();
+  const baseCommitOption = page.getByLabel("基线 Commit").locator("option").filter({ hasText: "Generate ST" }).first();
   const targetCommitOption = page.getByLabel("目标 Commit").locator("option").filter({ hasText: "E2E review generated program" }).first();
   const baseCommitValue = await baseCommitOption.getAttribute("value");
   const targetCommitValue = await targetCommitOption.getAttribute("value");
@@ -214,7 +214,7 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "本机设置与运行环境" })).toBeVisible();
   await expect(page.getByText("模型解释配置")).toBeVisible();
-  await expect(page.getByText("FX5U 兼容矩阵")).toBeVisible();
+  await expect(page.getByText("PLC 兼容矩阵")).toBeVisible();
   await expect(page.getByText("模板版本历史")).toBeVisible();
   await page.getByLabel("模型端点（可选）").fill("http://127.0.0.1:11434/v1");
   await page.getByLabel("模型名称（可选）").fill("e2e-explainer");

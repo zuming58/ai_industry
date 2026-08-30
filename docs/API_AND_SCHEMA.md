@@ -111,6 +111,17 @@ Commit 比较只能在同一 ProgramWorkspace 中执行，使用两个明确 Git
 
 项目时间线遵循 `kongpu-project-timeline/v1`，只读聚合 AuditEvent、MachineSpecRevision、GenerationRun、ProgramCommit、AutomatedReviewRun、GenerationAudit、CompileRun、SimulationRun、ReleaseCandidate、ProjectAcceptanceRun、AdapterEnvironment 和现场/外部证据。每条事件包含 UTC 时间、作者、触发请求、工具、结果、验证等级、实体定位和原始摘要；事件按时间倒序稳定排列，并严格按 project_id 隔离。时间线不创建或升级任何验证结论，厂商工具、真实 PLC、硬件和电气工程师状态仍保持未验证。
 
+## PLC Profile v1
+
+项目目标由版本化 Profile 校验，当前自动验证范围包含：
+
+| Profile | 目标 | Adapter | 自动能力 | 未验证边界 |
+|---|---|---|---|---|
+| `mitsubishi-fx5u-st-v1` | 三菱电机 MELSEC iQ-F：FX5U/FX5UC | `gxworks3` | MachineSpec、保守 IEC ST、静态审计、控谱参考模拟 | GX Works3/GX Simulator3、FX5U 硬件和电气确认 |
+| `inovance-h5u-st-v1` | 汇川技术 H5U：H5U-1614MTD-A8、H5U-3232MTD-A8 | `autoshop` | MachineSpec、保守 IEC ST、静态审计、控谱参考模拟 | AutoShop 直接地址绑定/编译/模拟、H5U 硬件和电气确认 |
+
+汇川 Profile 首批只接受 `X/Y/M` 逻辑地址格式。生成器不会为 H5U 写入未经公开资料和实机验证的 `AT` 地址绑定，而是在 ST 变量注释和 Control IR 中保留逻辑地址；因此本机结果是“自动验证通过”，不是 AutoShop 编译通过。
+
 ## MachineSpec v1
 
 顶层字段：schema_version、template_version、generated_at、project、plc_target、components、signals、sequence、interlocks、exceptions。

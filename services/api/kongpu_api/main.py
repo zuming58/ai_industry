@@ -17,7 +17,7 @@ from .artifacts import ArtifactIntegrityError, read_stored_bytes, store_bytes
 from .adapters import descriptor, descriptors, detect as detect_adapter
 from .audit import audit_bundle
 from .automated_review import (
-    AUTOMATED_REVIEW_VERSION, EXTERNAL_VALIDATION_GATES, run_automated_review,
+    AUTOMATED_REVIEW_VERSION, external_validation_gates, run_automated_review,
 )
 from .config import Settings, get_settings
 from .database import DatabaseRuntime
@@ -29,6 +29,10 @@ from .generator import GeneratedBundle, GENERATOR_VERSION, content_hash, generat
 from .machine_spec import (
     MachineSpec, WorkbookInputError, generate_workbook, parse_workbook, patch_cells,
     required_review_views, sheet_payload, spec_hash, validate_spec,
+)
+from .plc_profiles import (
+    TargetProfileError, compatibility_entries, normalize_project_target,
+    profile_for_target,
 )
 from .simulation import SimulationInputError, run_test_spec
 from .version_compare import compare_version_snapshots
@@ -1098,7 +1102,7 @@ def persist_automated_review(
                     "action": "保留当前生成基线，修复生成器或 TestSpec 后创建新基线",
                 }
             ],
-            "external_validation_gates": list(EXTERNAL_VALIDATION_GATES),
+            "external_validation_gates": external_validation_gates(spec_data),
             "claim_boundary": "自动审核执行被阻断；该结果不代表厂商工具、真实 PLC 或电气工程师确认。",
         }
 
@@ -1422,21 +1426,11 @@ def list_template_versions(session: Session = Depends(app_session)) -> list[dict
 
 @router.get("/api/v1/compatibility-matrix")
 def compatibility_matrix() -> dict[str, Any]:
-    entries = []
-    for model in ("FX5U-32MT/ES", "FX5U-64MT/ES", "FX5U-80MT/ES", "FX5UC-96MT/DSS"):
-        entries.append({
-            "target": {"brand": "三菱电机", "series": "MELSEC iQ-F", "model": model},
-            "machine_spec": "automatic_reference",
-            "structured_text_generation": "automatic",
-            "reference_simulation": "automatic_reference",
-            "gx_works3_compile": "unverified",
-            "gx_simulator3": "unverified",
-            "mx_component": "unverified",
-            "hardware": "pending_external",
-            "electrical_review": "pending_external",
-            "safety_plc": "excluded",
-        })
-    return {"schema": "kongpu-compatibility-matrix/v1", "entries": entries, "claim_boundary": "兼容矩阵仅表达当前代码范围与验证等级；未安装厂商工具、未连接 PLC、未进行硬件或电气工程师验证。"}
+    return {
+        "schema": "kongpu-compatibility-matrix/v1",
+        "entries": compatibility_entries(),
+        "claim_boundary": "兼容矩阵仅表达模板、确定性 ST 生成、静态审计和控谱参考模拟的自动验证范围；AutoShop/GX Works3 厂商编译与模拟、真实 PLC 和电气工程师确认均未验证。",
+    }
 
 
 @router.post("/api/v1/adapters/detect")
@@ -1624,7 +1618,7 @@ def create_compile_run(
     check_expected_revision(generation.revision, payload.expected_generation_revision, if_match)
     if generation.status != "review_ready" or not generation.control_ir_revision_id:
         raise api_error("GENERATION_NOT_READY", "生成物尚未完成确定性生成与审计，不能创建编译准备任务", 409, action="先在 P07 运行生成物自审计并处理 blocker")
-    _spec_data, _bundle, baseline_commit, _test_spec = generation_baseline(session, runtime_settings, generation)
+    spec_data, _bundle, baseline_commit, _test_spec = generation_baseline(session, runtime_settings, generation)
     require_current_automated_review(session, generation, baseline_commit)
     try:
         adapter = descriptor(payload.adapter_id)
@@ -1632,6 +1626,9 @@ def create_compile_run(
         raise api_error("ADAPTER_NOT_FOUND", "Adapter 不存在", 404)
     if payload.adapter_id == "reference":
         raise api_error("COMPILE_ADAPTER_UNSUPPORTED", "参考逻辑引擎不能执行厂商编译", 422, action="选择 GX Works3 或 AutoShop 并在厂商工具中人工编译")
+    expected_adapter = profile_for_target(spec_data.get("plc_target", {})).adapter_id
+    if payload.adapter_id != expected_adapter:
+        raise api_error("COMPILE_ADAPTER_TARGET_MISMATCH", "编译 Adapter 与锁定 PLC 目标不匹配", 422, action=f"为当前目标选择 {expected_adapter} Adapter")
     environment = session.scalar(select(AdapterEnvironment).where(AdapterEnvironment.project_id == project.id, AdapterEnvironment.adapter_id == adapter.adapter_id).order_by(AdapterEnvironment.updated_at.desc()))
     diagnostics = [{"code": "VENDOR_TOOL_UNAVAILABLE", "severity": "info", "message": "未执行厂商编译；当前 Adapter 仅提供人工降级路径。", "verification_level": "unverified", "action": "在隔离工程副本中使用对应厂商工具编译后导入证据"}]
     item = CompileRun(project_id=project.id, generation_run_id=generation.id, program_commit_id=baseline_commit.id, adapter_id=adapter.adapter_id, adapter_environment_id=environment.id if environment else None, status="manual_required", verification_level="unverified", diagnostics_json=json.dumps(diagnostics, ensure_ascii=False))
@@ -2220,9 +2217,10 @@ def create_project_acceptance_run(
         return result
 
     gates = json.loads(review.external_gates_json)
+    target_profile = profile_for_target(_spec.get("plc_target", {}))
     claim_boundary = (
         "本报告只证明当前 Commit 的自动审核、静态审计、参考逻辑模拟"
-        "及所选候选包完整性；GX Works3、GX Simulator3、真实 FX5U、"
+        f"及所选候选包完整性；{target_profile.vendor_tool} 厂商编译/模拟、真实 {'FX5U' if target_profile.profile_id.startswith('mitsubishi') else 'H5U'}、"
         "安全回路和电气工程师确认仍为待集中外部验证。"
     )
     report = {
@@ -3036,14 +3034,18 @@ def create_project(
     payload: ProjectCreate,
     session: Session = Depends(app_session),
 ) -> dict[str, Any]:
+    try:
+        target = normalize_project_target(payload.plc_brand, payload.plc_series, payload.plc_model)
+    except TargetProfileError as exc:
+        raise api_error("PLC_TARGET_UNSUPPORTED", str(exc), 422, action="从兼容矩阵选择受支持的 PLC 目标")
     count = session.scalar(select(func.count()).select_from(Project)) or 0
     project = Project(
         code=f"KP-{datetime.now(timezone.utc):%y%m}-{count + 1:03d}",
         name=payload.name.strip(),
         customer_code=payload.customer_code.strip() if payload.customer_code else None,
-        plc_brand=payload.plc_brand,
-        plc_series=payload.plc_series,
-        plc_model=payload.plc_model,
+        plc_brand=target["brand"],
+        plc_series=target["series"],
+        plc_model=target["model"],
         status="资料准备",
     )
     session.add(project)
@@ -3069,6 +3071,16 @@ def update_project(
     check_expected_revision(project.revision, payload.expected_revision, if_match)
     before_target = (project.plc_brand, project.plc_series, project.plc_model)
     changes = payload.model_dump(exclude_none=True, exclude={"expected_revision"})
+    proposed = {
+        "plc_brand": changes.get("plc_brand", project.plc_brand),
+        "plc_series": changes.get("plc_series", project.plc_series),
+        "plc_model": changes.get("plc_model", project.plc_model),
+    }
+    try:
+        normalized_target = normalize_project_target(**proposed)
+    except TargetProfileError as exc:
+        raise api_error("PLC_TARGET_UNSUPPORTED", str(exc), 422, action="从兼容矩阵选择受支持的 PLC 目标")
+    changes.update(normalized_target)
     for key, value in changes.items():
         setattr(project, key, value.strip() if isinstance(value, str) else value)
     target_changed = before_target != (project.plc_brand, project.plc_series, project.plc_model)
@@ -3577,7 +3589,7 @@ def create_generation_run(
             repo,
             branch_name,
             bundle.files,
-            f"Generate FX5U ST from MachineSpec {revision.sequence}",
+            f"Generate ST ({profile_for_target(json.loads(revision.data_json).get('plc_target', {})).profile_id}) from MachineSpec {revision.sequence}",
         )
         branch.base_commit = base_commit
         branch.head_commit = sha
@@ -3586,7 +3598,7 @@ def create_generation_run(
         program_commit = ProgramCommit(
             branch_id=branch.id,
             git_sha=sha,
-            message=f"Generate FX5U ST from MachineSpec {revision.sequence}",
+            message=f"Generate ST ({profile_for_target(json.loads(revision.data_json).get('plc_target', {})).profile_id}) from MachineSpec {revision.sequence}",
             machine_spec_revision_id=revision.id,
             control_ir_revision_id=control_ir.id,
         )

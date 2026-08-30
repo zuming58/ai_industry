@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from .generator import GeneratedBundle, GENERATOR_VERSION, content_hash, stable_json
+from .plc_profiles import TargetProfileError, profile_for_target
 
 
 AUDIT_VERSION = "2"
@@ -108,6 +109,12 @@ def _strip_st_non_executable(text: str) -> str:
 
 def audit_bundle(spec: dict[str, Any], bundle: GeneratedBundle) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
+    target = bundle.control_ir.get("target") or spec.get("plc_target") or {}
+    target_profile = None
+    try:
+        target_profile = profile_for_target(target)
+    except TargetProfileError as exc:
+        findings.append(_finding("TARGET_UNSUPPORTED", "blocker", "目标 PLC 不受生成器支持", str(exc), file="generated/ControlIR.json", action="选择兼容矩阵中列出的目标并重新生成"))
     for path in sorted(_REQUIRED_FILES):
         if path not in bundle.files:
             findings.append(_finding("GENERATED_FILE_MISSING", "blocker", "生成文件缺失", f"生成物缺少必需文件 {path}。", file=path, action="重新运行确定性生成并核对工件清单"))
@@ -245,19 +252,18 @@ def audit_bundle(spec: dict[str, Any], bundle: GeneratedBundle) -> dict[str, Any
     for signal in bundle.control_ir.get("signals", []):
         if _fold_identifier(signal.get("name")) in signal_names and sum(1 for item in bundle.control_ir["signals"] if _fold_identifier(item.get("name")) == _fold_identifier(signal.get("name"))) > 1:
             findings.append(_finding("DUPLICATE_ST_SYMBOL", "blocker", "ST 符号重复", f"变量 {signal.get('name')} 在生成变量表中重复。", file="src/GVL_IO.st", line=_line_for(signal.get("id"), bundle), entity_id=signal.get("id"), source=signal.get("source")))
-        if signal.get("address") and not re.fullmatch(r"[XYM][0-9A-F]+", str(signal["address"]), re.IGNORECASE):
-            findings.append(_finding("INVALID_IO_ADDRESS", "blocker", "I/O 地址格式异常", f"{signal.get('id')} 的地址 {signal.get('address')} 不符合 FX5U 基本地址格式。", file="src/GVL_IO.st", line=_line_for(signal.get("id"), bundle), entity_id=signal.get("id"), source=signal.get("source")))
+        if signal.get("address") and target_profile and not target_profile.address_pattern.fullmatch(str(signal["address"])):
+            findings.append(_finding("INVALID_IO_ADDRESS", "blocker", "I/O 地址格式异常", f"{signal.get('id')} 的地址 {signal.get('address')} 不符合 {target_profile.profile_id} 的首批 X/Y/M 逻辑地址子集。", file="src/GVL_IO.st", line=_line_for(signal.get("id"), bundle), entity_id=signal.get("id"), source=signal.get("source")))
         if signal.get("data_type") in {"INT", "DINT", "REAL", "WORD", "DWORD"} and not signal.get("unit"):
             findings.append(_finding("SIGNAL_UNIT_MISSING", "warning", "数值信号缺少单位", f"信号 {signal.get('id')} 是数值类型但没有单位，不能可靠解释量程或超时。", file="src/GVL_IO.st", line=_line_for(signal.get("id"), bundle), entity_id=signal.get("id"), source=signal.get("source"), action="在 Signals 填写 unit 后重新生成"))
     for address, addressed in signal_by_address.items():
         if len(addressed) > 1:
             for signal in addressed:
                 findings.append(_finding("DUPLICATE_IO_ADDRESS", "blocker", "I/O 地址重复", f"地址 {address} 同时分配给多个信号。", file="src/GVL_IO.st", line=_line_for(signal.get("id"), bundle), entity_id=signal.get("id"), source=signal.get("source"), action="为每个信号分配唯一地址"))
-    target = bundle.control_ir.get("target") or spec.get("plc_target") or {}
-    target_model = str(target.get("model") or target.get("plc_model") or "")
-    target_brand = str(target.get("brand") or "")
-    if "FX5U" not in target_model.upper() or (target_brand and "三菱" not in target_brand and "MITSUBISHI" not in target_brand.upper()):
-        findings.append(_finding("TARGET_UNSUPPORTED", "blocker", "目标 PLC 与 M3 范围不一致", f"当前 M3 只审计三菱 FX5U，收到目标 {target_brand} {target_model}。", file="generated/ControlIR.json", action="切换到 FX5U 目标或等待后续 Adapter"))
+    if target_profile:
+        recorded_profile = str(target.get("generator_profile") or "")
+        if recorded_profile != target_profile.profile_id:
+            findings.append(_finding("TARGET_PROFILE_MISMATCH", "blocker", "目标 Profile 与生成记录不一致", f"目标应使用 {target_profile.profile_id}，生成记录为 {recorded_profile or '空'}。", file="generated/ControlIR.json", action="使用当前生成器从锁定规格重新生成"))
     for step in bundle.control_ir.get("steps", []):
         expression = " ".join((step.get("entry_condition"), step.get("actions"), step.get("completion_condition")))
         unknown = sorted(item for item in _expression_identifiers(expression) if _fold_identifier(item) not in signal_names and not item.upper().startswith("KP_") and item.upper() not in {"TRUE", "FALSE"})

@@ -16,6 +16,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Settings
+from .plc_profiles import TargetProfileError, profile_for_target
 
 
 TEMPLATE_VERSION = "1.0"
@@ -209,7 +210,7 @@ def _style_header(ws) -> None:
 
 def _example_rows(project: dict[str, str]) -> dict[str, list[list[Any]]]:
     return {
-        "Project": [[project["code"], project["name"], project.get("customer_code"), "三菱电机", "MELSEC iQ-F", project["plc_model"], "未检测", "ST", 18, "s", "脱敏演示项目"]],
+        "Project": [[project["code"], project["name"], project.get("customer_code"), project["plc_brand"], project["plc_series"], project["plc_model"], "未检测", "ST", 18, "s", "脱敏演示项目"]],
         "Components": [
             ["STATION_01", "托盘举升检测站", None, "station", None, None, None, None],
             ["CYL_LIFT", "举升气缸", "STATION_01", "cylinder", "double_solenoid", 300, "mm", None],
@@ -440,6 +441,11 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
     issues: list[IssueData] = []
     project = spec["project"]
     plc = spec["plc_target"]
+    target_profile = None
+    try:
+        target_profile = profile_for_target(plc)
+    except TargetProfileError as exc:
+        issues.append(IssueData("PLC_TARGET_UNSUPPORTED", "blocker", "PLC 目标不受支持", str(exc), "Project", project["source"]["row"], "plc_model"))
     if not project.get("project_name"):
         issues.append(IssueData("PROJECT_NAME_REQUIRED", "blocker", "项目名称为空", "Project.project_name 为必填项", "Project", project["source"]["row"], "project_name"))
     if project.get("cycle_target") is not None and not project.get("cycle_unit"):
@@ -492,6 +498,11 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
             issues.append(IssueData("SIGNAL_COMPONENT_MISSING", "blocker", "信号引用的元件不存在", f"{component_id} 未在 Components 中定义", "Signals", source["row"], "component_id", signal_id))
         address = str(signal.get("address") or "").upper()
         if address:
+            if target_profile and not target_profile.address_pattern.fullmatch(address):
+                issues.append(IssueData("INVALID_IO_ADDRESS", "blocker", "I/O 地址格式不受目标 Profile 支持", f"{address} 不符合 {target_profile.profile_id} 的首批 X/Y/M 逻辑地址子集", "Signals", source["row"], "address", signal_id))
+            expected_prefix = {"DI": "X", "DO": "Y", "INTERNAL": "M"}.get(direction)
+            if expected_prefix and not address.startswith(expected_prefix):
+                issues.append(IssueData("IO_DIRECTION_ADDRESS_MISMATCH", "blocker", "信号方向与地址类型不匹配", f"{direction} 信号应使用 {expected_prefix} 地址，收到 {address}", "Signals", source["row"], "address", signal_id))
             if address in address_owner:
                 issues.append(IssueData("DUPLICATE_IO_ADDRESS", "blocker", "I/O 地址冲突", f"{address} 已被 {address_owner[address]} 使用", "Signals", source["row"], "address", signal_id))
             address_owner[address] = str(signal_id)

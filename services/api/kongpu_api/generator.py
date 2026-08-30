@@ -6,8 +6,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .plc_profiles import profile_for_target
 
-GENERATOR_VERSION = "fx5u-st-v3"
+GENERATOR_VERSION = "kongpu-st-v4"
 
 
 def stable_json(value: Any) -> str:
@@ -78,6 +79,7 @@ class GeneratedBundle:
 
 
 def build_control_ir(spec: dict[str, Any]) -> dict[str, Any]:
+    profile = profile_for_target(spec.get("plc_target", {}))
     signals = [
         {
             "id": item["signal_id"],
@@ -112,10 +114,20 @@ def build_control_ir(spec: dict[str, Any]) -> dict[str, Any]:
     step_numbers = {str(item["id"]).casefold(): item["number"] for item in steps}
     for item in steps:
         item["next_step_number"] = step_numbers.get(str(item.get("next_step_id") or "").casefold(), 0)
+    target = dict(spec.get("plc_target", {}))
+    target.update(
+        {
+            "generator_profile": profile.profile_id,
+            "adapter_id": profile.adapter_id,
+            "vendor_tool": profile.vendor_tool,
+            "vendor_compile_verified": False,
+            "hardware_verified": False,
+        }
+    )
     return {
         "ir_version": "1.0",
         "generator_version": GENERATOR_VERSION,
-        "target": spec.get("plc_target", {}),
+        "target": target,
         "project": spec.get("project", {}),
         "components": sorted(spec.get("components", []), key=lambda row: row.get("component_id", "")),
         "signals": signals,
@@ -126,11 +138,17 @@ def build_control_ir(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _render_gvl(ir: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
-    lines = ["VAR_GLOBAL", "    // Generated from locked MachineSpec. Review in GX Works3 before use."]
+    profile = profile_for_target(ir.get("target", {}))
+    lines = [
+        "VAR_GLOBAL",
+        f"    // Generated from locked MachineSpec for {profile.brand} {profile.series}.",
+        f"    // Vendor compile is unverified; review in {profile.vendor_tool} before use.",
+    ]
     traces: list[dict[str, Any]] = []
     for signal in ir["signals"]:
-        address = f" AT %{signal['address']}" if signal.get("address") else ""
-        lines.append(f"    {signal['name']}{address} : {signal['data_type']}; // {signal['display_name']}")
+        address = f" AT %{signal['address']}" if signal.get("address") and profile.direct_address_binding else ""
+        logical_address = f" | logical address {signal['address']}" if signal.get("address") and not profile.direct_address_binding else ""
+        lines.append(f"    {signal['name']}{address} : {signal['data_type']}; // {signal['display_name']}{logical_address}")
         traces.append(
             {
                 "output_path": "src/GVL_IO.st",
@@ -147,9 +165,10 @@ def _render_gvl(ir: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
 
 
 def _render_program(ir: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    profile = profile_for_target(ir.get("target", {}))
     lines = [
         "PROGRAM PRG_AutoCycle",
-        "// Deterministic FX5U Structured Text skeleton.",
+        f"// Deterministic Structured Text skeleton for profile {profile.profile_id}.",
         "// Safety functions, PLC download, RUN/STOP and forced output are intentionally absent.",
         "CASE KP_CurrentStep OF",
     ]
@@ -222,6 +241,7 @@ def _build_test_spec(ir: dict[str, Any]) -> dict[str, Any]:
 
 def generate_bundle(spec: dict[str, Any]) -> GeneratedBundle:
     ir = build_control_ir(spec)
+    profile = profile_for_target(ir.get("target", {}))
     gvl, signal_traces = _render_gvl(ir)
     program, step_traces = _render_program(ir)
     test_spec = _build_test_spec(ir)
@@ -241,7 +261,12 @@ def generate_bundle(spec: dict[str, Any]) -> GeneratedBundle:
         "src/PRG_AutoCycle.st": program,
         "generated/ControlIR.json": control_ir_text,
         "tests/TestSpec.json": test_spec_text,
-        "README.md": "# 控谱生成工作区\n\n目标：三菱 FX5U / Structured Text。\n\n本目录未经过 GX Works3 编译验证，禁止直接用于真实 PLC 下载。\n",
+        "README.md": (
+            "# 控谱生成工作区\n\n"
+            f"目标：{profile.brand} {profile.series} / {ir['target'].get('model')} / Structured Text。\n\n"
+            f"生成 Profile：`{profile.profile_id}`；厂商 Adapter：`{profile.adapter_id}`。\n\n"
+            f"本目录未经过 {profile.vendor_tool} 编译、厂商模拟或硬件验证，禁止直接用于真实 PLC 下载或生产。\n"
+        ),
     }
     json_lines = control_ir_text.splitlines()
     test_lines = test_spec_text.splitlines()

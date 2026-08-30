@@ -1,4 +1,6 @@
-# FX5U 集中电气验证包
+# FX5U / H5U 集中电气验证包
+
+目标 Profile 决定厂商工具：FX5U 使用 GX Works3/GX Simulator3，H5U 使用 AutoShop。两条路径的代码自动验证都不等于厂商工具或硬件验证。
 
 ## 目的与安排
 

@@ -7,6 +7,7 @@ from .adapters import CAPABILITIES
 from .audit import audit_bundle
 from .generator import GeneratedBundle, GENERATOR_VERSION, content_hash, generate_bundle, stable_json
 from .simulation import SimulationInputError, run_reference_simulation, run_test_spec
+from .plc_profiles import profile_for_target
 
 
 AUTOMATED_REVIEW_VERSION = "3"
@@ -43,6 +44,23 @@ EXTERNAL_VALIDATION_GATES = (
         "required_evidence": "互锁、复位、异常和失效状态签字记录",
     },
 )
+
+
+def external_validation_gates(spec: dict[str, Any]) -> list[dict[str, str]]:
+    profile = profile_for_target(spec.get("plc_target", {}))
+    gates = [dict(item) for item in EXTERNAL_VALIDATION_GATES]
+    if profile.adapter_id == "autoshop":
+        replacements = {
+            "gxworks3_compile": ("autoshop_compile", "AutoShop 工程导入与完整编译"),
+            "gxsimulator3_validation": ("autoshop_simulation", "AutoShop 厂商模拟对照"),
+            "fx5u_hardware_validation": ("h5u_hardware_validation", "H5U 受控台架实测"),
+        }
+        for gate in gates:
+            replacement = replacements.get(gate["id"])
+            if replacement:
+                gate["id"], gate["title"] = replacement
+                gate["required_evidence"] = gate["required_evidence"].replace("GX Works3", "AutoShop").replace("GX Simulator3 与 MX Component", "AutoShop 厂商模拟").replace("CPU/模块", "H5U CPU/模块")
+    return gates
 
 
 def _bundle_fingerprint(bundle: GeneratedBundle) -> str:
@@ -423,6 +441,7 @@ def run_automated_review(
         )
     )
     failed = [item for item in checks if item["status"] == "failed"]
+    gates = external_validation_gates(spec)
     return {
         "review_version": AUTOMATED_REVIEW_VERSION,
         "input_hash": input_hash,
@@ -433,8 +452,8 @@ def run_automated_review(
             "total": len(checks),
             "passed": len(checks) - len(failed),
             "failed": len(failed),
-            "external_pending": len(EXTERNAL_VALIDATION_GATES),
+            "external_pending": len(gates),
         },
-        "external_validation_gates": list(EXTERNAL_VALIDATION_GATES),
+        "external_validation_gates": gates,
         "claim_boundary": "自动审核只证明代码和确定性自动验证范围，不代表厂商工具、真实 PLC 或电气工程师确认。",
     }

@@ -64,13 +64,13 @@ export const api = {
   async getProject(id: string): Promise<Project> {
     return ensure(await apiClient.GET("/api/v1/projects/{project_id}", { params: { path: { project_id: id } } }));
   },
-  async createProject(payload: { name: string; customer_code?: string; plc_model: string }): Promise<Project> {
-    return ensure(await apiClient.POST("/api/v1/projects", { body: { ...payload, plc_brand: "三菱电机", plc_series: "MELSEC iQ-F" } }));
+  async createProject(payload: { name: string; customer_code?: string; plc_brand: string; plc_series: string; plc_model: string }): Promise<Project> {
+    return ensure(await apiClient.POST("/api/v1/projects", { body: payload }));
   },
   async updateProject(project: Project, payload: Partial<Project>): Promise<Project> {
     return ensure(await apiClient.PATCH("/api/v1/projects/{project_id}", {
       params: { path: { project_id: project.id } },
-      body: { name: payload.name, customer_code: payload.customer_code, plc_model: payload.plc_model, expected_revision: project.revision },
+      body: { name: payload.name, customer_code: payload.customer_code, plc_brand: payload.plc_brand, plc_series: payload.plc_series, plc_model: payload.plc_model, expected_revision: project.revision },
     }));
   },
   async archive(id: string): Promise<Project> {

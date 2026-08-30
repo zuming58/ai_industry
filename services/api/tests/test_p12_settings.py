@@ -134,7 +134,9 @@ def test_template_history_and_compatibility_matrix_are_explicit(client: TestClie
     assert matrix.status_code == 200
     body = matrix.json()
     assert body["schema"] == "kongpu-compatibility-matrix/v1"
-    assert len(body["entries"]) == 4
-    assert {entry["gx_works3_compile"] for entry in body["entries"]} == {"unverified"}
+    assert len(body["entries"]) == 6
+    assert {entry["target"]["series"] for entry in body["entries"]} == {"MELSEC iQ-F", "H5U"}
+    assert {entry["vendor_compile"] for entry in body["entries"]} == {"unverified"}
+    assert {entry["vendor_simulation"] for entry in body["entries"]} == {"unverified"}
     assert {entry["hardware"] for entry in body["entries"]} == {"pending_external"}
     assert {entry["safety_plc"] for entry in body["entries"]} == {"excluded"}

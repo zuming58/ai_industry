@@ -1,16 +1,126 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 import threading
 import time
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from sqlalchemy import select
 
 from kongpu_api.generator import generate_bundle
 import kongpu_api.main as api_main
 from kongpu_api.models import ProgramBranch, ProgramCommit, ProgramWorkspace
 from kongpu_api.repository import RepositoryError, safe_file
+
+
+def _lock_revision(client: TestClient, revision: dict) -> dict:
+    for issue in revision["issues"]:
+        if issue["severity"] == "warning":
+            response = client.post(
+                f"/api/v1/spec-revisions/{revision['id']}/warnings/{issue['id']}/accept",
+                json={"reason": "自动化回归使用范例规格", "expected_revision": revision["revision"]},
+            )
+            assert response.status_code == 200, response.text
+            revision = response.json()
+    for view in revision["required_views"]:
+        response = client.put(
+            f"/api/v1/spec-revisions/{revision['id']}/confirmations/{view}",
+            json={"confirmed_by": "自动化测试", "expected_revision": revision["revision"]},
+        )
+        assert response.status_code == 200, response.text
+        revision = response.json()
+    response = client.post(
+        f"/api/v1/spec-revisions/{revision['id']}/lock",
+        json={"confirmed_by": "自动化测试", "expected_revision": revision["revision"]},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_inovance_h5u_profile_template_generation_audit_and_reference_simulation(
+    client: TestClient,
+) -> None:
+    created = client.post(
+        "/api/v1/projects",
+        json={
+            "name": "H5U 自动化回归线",
+            "plc_brand": "汇川技术",
+            "plc_series": "H5U",
+            "plc_model": "H5U-1614MTD-A8",
+        },
+    )
+    assert created.status_code == 201, created.text
+    project = created.json()
+    assert (project["plc_brand"], project["plc_series"], project["plc_model"]) == ("汇川技术", "H5U", "H5U-1614MTD-A8")
+
+    template = client.post(f"/api/v1/projects/{project['id']}/templates?kind=example")
+    assert template.status_code == 200, template.text
+    workbook = load_workbook(BytesIO(template.content), read_only=True, data_only=True)
+    meta = {row[0]: row[1] for row in workbook["_meta"].iter_rows(values_only=True) if row and row[0]}
+    project_row = next(workbook["Project"].iter_rows(min_row=2, values_only=True))
+    assert meta["plc_brand"] == "汇川技术"
+    assert meta["plc_series"] == "H5U"
+    assert project_row[3:6] == ("汇川技术", "H5U", "H5U-1614MTD-A8")
+
+    imported = client.post(
+        f"/api/v1/projects/{project['id']}/imports",
+        files={"file": ("h5u.xlsx", template.content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert imported.status_code == 201, imported.text
+    locked = _lock_revision(client, imported.json()["revision"])
+    generated = client.post(
+        f"/api/v1/projects/{project['id']}/generation-runs",
+        json={"spec_revision_id": locked["revision"]["id"], "branch_name": "generated/h5u-profile"},
+    )
+    assert generated.status_code == 201, generated.text
+    run = generated.json()
+    control_ir = next(item for item in run["artifacts"] if item["path"] == "generated/ControlIR.json")
+    assert control_ir["content_hash"]
+
+    files = client.get(f"/api/v1/branches/{run['branch_id']}/files").json()
+    gvl = client.get(f"/api/v1/branches/{run['branch_id']}/files/src/GVL_IO.st").json()["content"]
+    readme = client.get(f"/api/v1/branches/{run['branch_id']}/files/README.md").json()["content"]
+    assert files["branch"]["status"] == "clean"
+    assert "logical address X010" in gvl
+    assert " AT %X010" not in gvl
+    assert "inovance-h5u-st-v1" in readme
+    assert "AutoShop" in readme
+
+    audit = client.post(f"/api/v1/generation-runs/{run['id']}/audit")
+    assert audit.status_code == 200, audit.text
+    assert audit.json()["status"] == "review_ready"
+    review = client.get(f"/api/v1/projects/{project['id']}/automated-reviews").json()[0]
+    assert review["status"] == "passed"
+    assert {item["id"] for item in review["external_validation_gates"]} >= {"autoshop_compile", "autoshop_simulation", "h5u_hardware_validation"}
+
+    simulation = client.post(
+        f"/api/v1/projects/{project['id']}/simulation-runs",
+        json={"generation_run_id": run["id"], "input_schedule": {"1": {"SIG_TRAY_PRESENT": True}}, "max_cycles": 10, "expected_generation_revision": run["revision"]},
+    )
+    assert simulation.status_code == 201, simulation.text
+    assert simulation.json()["verification_level"] == "automatic_reference"
+
+    wrong_adapter = client.post(
+        f"/api/v1/projects/{project['id']}/compile-runs",
+        json={"generation_run_id": run["id"], "adapter_id": "gxworks3", "expected_generation_revision": run["revision"]},
+    )
+    assert wrong_adapter.status_code == 422
+    assert wrong_adapter.json()["code"] == "COMPILE_ADAPTER_TARGET_MISMATCH"
+    compile_run = client.post(
+        f"/api/v1/projects/{project['id']}/compile-runs",
+        json={"generation_run_id": run["id"], "adapter_id": "autoshop", "expected_generation_revision": run["revision"]},
+    )
+    assert compile_run.status_code == 201, compile_run.text
+    assert compile_run.json()["status"] == "manual_required"
+    assert compile_run.json()["verification_level"] == "unverified"
+
+    matrix = client.get("/api/v1/compatibility-matrix")
+    assert matrix.status_code == 200
+    h5u = next(item for item in matrix.json()["entries"] if item["target"]["model"] == "H5U-1614MTD-A8")
+    assert h5u["adapter_id"] == "autoshop"
+    assert h5u["vendor_compile"] == "unverified"
 
 
 def test_generation_requires_locked_spec(client: TestClient, project: dict) -> None:

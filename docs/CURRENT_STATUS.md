@@ -6,7 +6,7 @@
 
 M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”。这表示本机项目、Excel/MachineSpec、规格锁定、确定性程序生成、本地 Git 版本流程、项目级自动审核、参考逻辑模拟、自动交付候选包、候选完整性复核、项目自动验收汇总、非破坏性版本恢复、离线只读监控准备和确定性供应链清单已经由自动化测试验证；不表示已经通过 GX Works3 编译、GX Simulator3 模拟、连接真实 PLC、完成硬件实测或获得电气工程师确认。
 
-黄金项目原件尚未放入 .private/golden-project/，因此 M1 的黄金项目双向验收仍待进行。GX Works3、GX Simulator3、MX Component 和 FX5U 硬件当前均未验证，M2 生成物禁止直接用于生产或下载 PLC。
+黄金项目原件尚未放入 .private/golden-project/，因此 M1 的黄金项目双向验收仍待进行。GX Works3、GX Simulator3、AutoShop、MX Component、FX5U/H5U 硬件当前均未验证，生成物禁止直接用于生产或下载 PLC。
 
 ## 已实现能力
 
@@ -25,7 +25,7 @@ M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”�
 
 - ProgramWorkspace、分支、Commit、Control IR、GenerationRun、程序工件、TestSpec 和 TraceLink。
 - 每项目独立本地 Git 文本仓库；二进制与 JSON 工件继续使用内容寻址存储。
-- 已锁定 MachineSpec 到类型化 Control IR、FX5U Structured Text 骨架、变量表和 TestSpec 的确定性生成。
+- 已锁定 MachineSpec 到按 PLC Profile 选择的类型化 Control IR、保守 Structured Text 骨架、变量表和 TestSpec 的确定性生成；当前包含三菱 FX5U 与汇川 H5U Profile。
 - 同一输入和生成器版本产生稳定内容；信号、步骤和测试可追溯到 MachineSpec 与 Excel 来源。
 - P06 真实程序树、文件编辑、保存、提交、生成警告和追溯；P11 支持真实分支、任意两个同项目 Commit 的结构化多工件比较（源码、MachineSpec、I/O、参数、Control IR、TestSpec、验证和厂商配置）、规格到现场证据的统一只读时间线，以及从历史 Commit 创建独立恢复分支。
 - 恢复操作不移动来源分支、不改写 Commit 历史，只复制不可变 Control IR、TestSpec、程序工件和追溯基线，并为新 GenerationRun 重新运行 20 次自动审核；旧静态审计、参考模拟、候选包和厂商证据不会继承。
@@ -39,7 +39,7 @@ M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”�
 - 每次确定性生成完成后自动创建不可变 AutomatedReviewRun。默认重复生成 20 次，并检查生成基线哈希、MachineSpec/Excel 来源覆盖（IEC/ST 标识符不区分大小写）、静态审计、受限参考执行器确定性、七类故意变异（含条件翻转行为）和 Adapter 安全边界。
 - 相同生成 Commit、审核版本、重复次数与输入哈希只复用原报告；不同次数或生成器版本会形成新报告。审核阻断会保留程序基线和报告，不覆盖 Git 历史。
 - 参考模拟使用受限 TestSpec DSL 和离散扫描周期，支持初始输入、周期输入注入、重启、通信断开/恢复、超时和复位沿场景，输出带来源、条件、通信状态、结构化诊断和只读内部状态的不可变 Trace；只有 DI/AI/COMM 可注入，动作只能写 DO/AO/INTERNAL/COMM，生成器、静态审计与执行器共同阻止方向越权。验证等级固定为 automatic_reference，不等同于 GX Simulator3。未显式建模的互锁内部状态默认只读 false、产生 warning 且不可由 API 注入。
-- P07 已支持项目自动审核、报告刷新恢复、显式复跑、编译准备、结构化诊断和人工证据导入；P08 已支持参考模拟、TestSpec 用例和 Trace；P12 已支持真实本机设置、数据最小化策略、模板版本历史、FX5U 兼容矩阵、设置审计、Adapter 能力矩阵与只读环境快照。
+- P07 已支持项目自动审核、报告刷新恢复、显式复跑、编译准备、结构化诊断和人工证据导入；P08 已支持参考模拟、TestSpec 用例和 Trace；P12 已支持真实本机设置、数据最小化策略、模板版本历史、FX5U/H5U 兼容矩阵、设置审计、Adapter 能力矩阵与只读环境快照。
 - 外部日志、截图和报告按 SHA-256 内容寻址保存，验证等级固定为 manual_unverified，不会自动升级为厂商工具验证通过。
 - 每次程序 Commit 都继承并核验锁定 MachineSpec、Control IR 与 TestSpec 基线，随后自动触发 20 次确定性审核；编译准备、参考模拟和交付候选只接受当前 Commit 的审核结果。
 - P06 文件编辑器在当前 Commit 文件完整加载且 revision 一致前保持只读，避免加载竞态覆盖 ST；Control IR 与 TestSpec 在程序工作区中始终不可编辑。
