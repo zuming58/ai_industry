@@ -302,6 +302,23 @@ def test_reference_simulation_is_case_insensitive_like_iec_st() -> None:
     assert result["traces"][0]["outputs"] == {"Done": True}
 
 
+def test_reference_simulation_rejects_ambiguous_ir_identifiers() -> None:
+    base = {
+        "signals": [{"id": "SIG_READY", "name": "Ready", "direction": "DI"}],
+        "steps": [{"id": "S1", "entry_condition": "TRUE", "completion_condition": "Ready", "actions": "", "next_step_id": "END"}],
+        "exceptions": [{"exception_id": "EX_TIMEOUT"}],
+    }
+    variants = [
+        {**base, "signals": [*base["signals"], {"id": "sig_ready", "name": "Other", "direction": "DI"}]},
+        {**base, "signals": [*base["signals"], {"id": "SIG_OTHER", "name": "ready", "direction": "DI"}]},
+        {**base, "steps": [*base["steps"], {**base["steps"][0], "id": "s1"}]},
+        {**base, "exceptions": [*base["exceptions"], {"exception_id": "ex_timeout"}]},
+    ]
+    for ir in variants:
+        with pytest.raises(SimulationInputError, match="重复"):
+            run_reference_simulation(ir, {}, 2)
+
+
 def test_restricted_test_spec_reports_cases_and_rejects_unknown_fields() -> None:
     ir = {
         "signals": [{"name": "Start", "direction": "DI"}, {"name": "Done", "direction": "DO"}],

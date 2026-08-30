@@ -34,6 +34,26 @@ def _canonical_names(names: set[str]) -> dict[str, str]:
     return result
 
 
+def _validate_ir_identifiers(ir: dict[str, Any]) -> None:
+    """Reject IR maps that would otherwise overwrite identifiers in dicts."""
+    for items_key, field, label in (
+        ("signals", "id", "信号 ID"),
+        ("signals", "name", "信号名称"),
+        ("steps", "id", "工步 ID"),
+        ("exceptions", "exception_id", "异常 ID"),
+    ):
+        seen: dict[str, str] = {}
+        for item in ir.get(items_key, []):
+            value = str(item.get(field) or "").strip()
+            if not value:
+                continue
+            folded = _fold_identifier(value)
+            existing = seen.get(folded)
+            if existing is not None:
+                raise SimulationInputError(f"{label}重复或仅大小写不同: {existing}, {value}")
+            seen[folded] = value
+
+
 def _normalize_values(
     values: dict[str, Any],
     known: set[str],
@@ -270,6 +290,7 @@ def run_reference_simulation(
         raise SimulationInputError("max_cycles 必须在 1 到 10000 之间")
     if cycle_time_ms < 1 or cycle_time_ms > 60_000:
         raise SimulationInputError("cycle_time_ms 必须在 1 到 60000 之间")
+    _validate_ir_identifiers(ir)
     internal_states = _interlock_internal_states(ir)
     values = _signal_defaults(ir)
     values.update({name: False for name in internal_states})
@@ -430,6 +451,7 @@ def run_test_spec(
 ) -> dict[str, Any]:
     if str(test_spec.get("version")) != TEST_SPEC_DSL_VERSION:
         raise SimulationInputError("TestSpec 版本不受支持")
+    _validate_ir_identifiers(ir)
     tests = test_spec.get("tests")
     if not isinstance(tests, list) or not tests:
         raise SimulationInputError("TestSpec 必须包含至少一个测试用例")
