@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+import json
 import threading
 import time
+import zipfile
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
@@ -101,6 +103,34 @@ def test_inovance_h5u_profile_template_generation_audit_and_reference_simulation
     )
     assert simulation.status_code == 201, simulation.text
     assert simulation.json()["verification_level"] == "automatic_reference"
+
+    candidate_response = client.post(
+        f"/api/v1/projects/{project['id']}/release-candidates",
+        json={
+            "generation_run_id": run["id"],
+            "expected_generation_revision": run["revision"],
+        },
+    )
+    assert candidate_response.status_code == 201, candidate_response.text
+    candidate = candidate_response.json()
+    package = client.get(f"/api/v1/artifacts/{candidate['package_artifact_id']}")
+    assert package.status_code == 200, package.text
+    with zipfile.ZipFile(BytesIO(package.content)) as archive:
+        validation_package = json.loads(
+            archive.read("validation/EXTERNAL_VALIDATION_PACKAGE.json")
+        )
+        checklist = archive.read(
+            "validation/EXTERNAL_VALIDATION_CHECKLIST.md"
+        ).decode("utf-8")
+    assert validation_package["target"]["profile_id"] == "inovance-h5u-st-v1"
+    assert validation_package["target"]["vendor_tool"] == "AutoShop"
+    assert {item["id"] for item in validation_package["gates"]} >= {
+        "autoshop_compile",
+        "autoshop_simulation",
+        "h5u_hardware_validation",
+    }
+    assert "AutoShop" in checklist
+    assert "H5U-1614MTD-A8" in checklist
 
     wrong_adapter = client.post(
         f"/api/v1/projects/{project['id']}/compile-runs",

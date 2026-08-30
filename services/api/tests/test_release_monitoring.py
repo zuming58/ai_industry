@@ -148,7 +148,25 @@ def test_release_candidate_and_read_only_monitoring_flow(
         "evidence/automated-review.json",
         "evidence/static-audit.json",
         "evidence/reference-simulation.json",
+        "validation/EXTERNAL_VALIDATION_PACKAGE.json",
+        "validation/EXTERNAL_VALIDATION_CHECKLIST.md",
     } <= entry_paths
+    validation_package = json.loads(
+        zipfile.ZipFile(io.BytesIO(package.content)).read(
+            "validation/EXTERNAL_VALIDATION_PACKAGE.json"
+        )
+    )
+    assert validation_package["schema"] == "kongpu-validation-package/v1"
+    assert validation_package["status"] == "pending_external"
+    assert validation_package["verification_level"] == "manual_unverified"
+    assert validation_package["target"]["profile_id"] == "mitsubishi-fx5u-st-v1"
+    assert validation_package["baseline"]["machine_spec_hash"] == candidate["manifest"]["baseline"]["machine_spec_hash"]
+    assert validation_package["baseline"]["git_sha"] == candidate["manifest"]["baseline"]["git_sha"]
+    checklist = zipfile.ZipFile(io.BytesIO(package.content)).read(
+        "validation/EXTERNAL_VALIDATION_CHECKLIST.md"
+    ).decode("utf-8")
+    assert "集中外部验证执行清单" in checklist
+    assert "GX Works3" in checklist
 
     repeated = client.post(
         f"/api/v1/projects/{project['id']}/release-candidates",

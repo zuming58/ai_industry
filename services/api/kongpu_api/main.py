@@ -22,8 +22,9 @@ from .automated_review import (
 from .config import Settings, get_settings
 from .database import DatabaseRuntime
 from .delivery import (
-    DeliveryInputError, build_delivery_candidate, entry_index, sha256_bytes,
-    stable_json_bytes, verify_delivery_candidate,
+    DeliveryInputError, build_delivery_candidate, build_validation_package,
+    entry_index, render_validation_checklist, sha256_bytes, stable_json_bytes,
+    verify_delivery_candidate,
 )
 from .generator import GeneratedBundle, GENERATOR_VERSION, content_hash, generate_bundle, stable_json
 from .machine_spec import (
@@ -1870,6 +1871,35 @@ def create_release_candidate(
     for path, content in sorted(bundle.files.items()):
         entries[f"program/{path}"] = content.encode("utf-8")
 
+    target_profile = profile_for_target(spec["plc_target"])
+    validation_target = {
+        "profile_id": target_profile.profile_id,
+        "brand": target_profile.brand,
+        "series": target_profile.series,
+        "model": spec["plc_target"]["model"],
+        "adapter_id": target_profile.adapter_id,
+        "vendor_tool": target_profile.vendor_tool,
+        "program_language": target_profile.program_language,
+    }
+    validation_package = json.loads(
+        build_validation_package(
+            project={"id": project.id, "code": project.code, "name": project.name},
+            target_profile=validation_target,
+            machine_spec_hash=revision.content_hash,
+            program_commit_id=commit.id,
+            git_sha=commit.git_sha,
+            generator_version=run.generator_version,
+            test_spec_hash=test_spec.content_hash,
+            gates=external_validation_gates(spec),
+        ).decode("utf-8")
+    )
+    entries["validation/EXTERNAL_VALIDATION_PACKAGE.json"] = stable_json_bytes(
+        validation_package
+    )
+    entries["validation/EXTERNAL_VALIDATION_CHECKLIST.md"] = (
+        render_validation_checklist(validation_package)
+    )
+
     manual_evidence = session.execute(
         select(EvidenceArtifact, SourceArtifact)
         .join(CompileRun, EvidenceArtifact.compile_run_id == CompileRun.id)
@@ -1894,6 +1924,9 @@ def create_release_candidate(
         "machine_spec_hash": revision.content_hash,
         "control_ir_hash": content_hash(stable_json(bundle.control_ir)),
         "test_spec_hash": test_spec.content_hash,
+        "validation_package_hash": sha256_bytes(
+            entries["validation/EXTERNAL_VALIDATION_PACKAGE.json"]
+        ),
         "automated_review_hash": review.input_hash,
         "static_audit_hash": static_audit.input_hash,
         "simulation_trace_artifact_id": simulation.trace_artifact_id,

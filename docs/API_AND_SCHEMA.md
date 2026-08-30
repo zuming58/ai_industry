@@ -97,7 +97,7 @@ AutomatedReviewRun 以 generation_run_id、review_version 和 input_hash 唯一�
 
 参考模拟状态为 review_ready 或 failed，使用 `kongpu-reference-v2`、版本化 TestSpec DSL（当前 1.0）和受限表达式/赋值语法；不执行任意 Python、ST、Shell 或外部进程。信号、工步、互锁和 TestSpec 引用遵循 IEC/ST 不区分大小写语义；仅大小写不同的歧义定义或重复输入会被确定性拒绝。请求可携带 `input_overrides`、按周期的 `input_schedule`、`restart_cycles`、`disconnect_cycles`、`max_cycles` 和 `cycle_time_ms`。只有 DI、AI 和 COMM 可作为外部输入；动作只能写入 DO、AO、INTERNAL 和 COMM，TestSpec 生成与静态审计使用同一方向门禁。未知字段、未知信号、方向不匹配、非有限数值、越界周期及同周期重启/断线均被拒绝。结果绑定 ProgramCommit、TestSpecRevision、Control IR 和引擎版本，并保存不可变周期 Trace 工件；引擎版本变化不能继承旧结果。Trace 分离动作执行前的外部信号 `inputs`、本周期 `outputs` 和只读 `internal_state`，同时记录入口/完成条件、Excel 来源、通信状态、事件与结构化诊断；历史仅含事件数组的记录仍可读取。未显式建模的互锁内部状态只在参考执行器中按只读 `false` 处理并产生 warning，不能通过 API 注入，也不代表现场状态。
 
-交付候选创建必须绑定当前 GenerationRun、当前分支 head Commit、passed 自动审核、无 blocker 静态审计和当前 Commit 的 review_ready 参考模拟。分支存在未提交修改时返回 409。候选 ZIP 使用固定时间戳和排序条目生成，MANIFEST.json 记录基线、外部验证门、文件 SHA-256 与大小；相同 project_id + input_hash 只复用原候选。状态固定为 external_validation_required，验证等级固定为 automatic_package。
+交付候选创建必须绑定当前 GenerationRun、当前分支 head Commit、passed 自动审核、无 blocker 静态审计和当前 Commit 的 review_ready 参考模拟。分支存在未提交修改时返回 409。候选 ZIP 使用固定时间戳和排序条目生成，MANIFEST.json 记录基线、外部验证门、文件 SHA-256 与大小；同时包含 `validation/EXTERNAL_VALIDATION_PACKAGE.json` 和 `validation/EXTERNAL_VALIDATION_CHECKLIST.md`，两者绑定当前 PLC Profile、锁定规格哈希、Program Commit、生成器、TestSpec 和外部验证门。相同 project_id + input_hash 只复用原候选。状态固定为 external_validation_required，验证等级固定为 automatic_package；验证包中的 `manual_unverified` 不会被 ZIP 生成或证据上传自动升级。
 
 候选完整性复核会重新读取内容寻址 ZIP，并核对外层工件 SHA-256、路径穿越、重复条目、条目数与解压体积上限、包内 Manifest、逐项 SHA-256/大小，以及 GenerationRun/ProgramCommit 基线。相同候选内容只复用原 ReleaseCandidateVerification；验证等级 automatic_integrity 只表示 ZIP 完整性自动验证通过。
 

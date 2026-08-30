@@ -16,6 +16,73 @@ class DeliveryInputError(ValueError):
     pass
 
 
+def build_validation_package(
+    *,
+    project: dict[str, Any],
+    target_profile: dict[str, Any],
+    machine_spec_hash: str,
+    program_commit_id: str,
+    git_sha: str,
+    generator_version: str,
+    test_spec_hash: str,
+    gates: list[dict[str, Any]],
+) -> bytes:
+    """Build a deterministic, profile-bound checklist for future vendor validation."""
+    vendor_tool = str(target_profile.get("vendor_tool") or "厂商 IDE")
+    model = str(target_profile.get("model") or "PLC")
+    steps = [
+        {"id": "environment", "title": "记录验证环境", "owner": "电气工程师", "required": True, "expected": f"记录 {vendor_tool} 精确版本、{model} CPU/模块、授权和操作系统。", "evidence": "版本截图或导出报告"},
+        {"id": "import", "title": "导入生成工程", "owner": "电气工程师", "required": True, "expected": f"在隔离副本导入 Structured Text，确认 {target_profile.get('series')} 变量与逻辑地址映射。", "evidence": "工程副本和导入日志"},
+        {"id": "compile", "title": "厂商编译", "owner": "电气工程师", "required": True, "expected": "完整编译并保存全部诊断、行号和告警；不得覆盖生成基线。", "evidence": "编译日志"},
+        {"id": "simulation", "title": "厂商模拟对照", "owner": "电气工程师", "required": True, "expected": "执行正常、缺反馈、超时、互锁、复位、断线和重启场景。", "evidence": "模拟 Trace 或报告"},
+        {"id": "hardware", "title": "受控台架实测", "owner": "电气工程师", "required": True, "expected": f"在明确型号 {model} 台架核对 I/O、断电/断线恢复和失效状态。", "evidence": "接线清单、现场记录"},
+        {"id": "signoff", "title": "电气逻辑确认", "owner": "电气工程师", "required": True, "expected": "确认互锁、复位、异常策略及安全回路边界；安全功能不由本系统自动生成。", "evidence": "签字记录"},
+    ]
+    payload = {
+        "schema": "kongpu-validation-package/v1",
+        "status": "pending_external",
+        "verification_level": "manual_unverified",
+        "project": {"id": project.get("id"), "code": project.get("code"), "name": project.get("name")},
+        "target": target_profile,
+        "baseline": {"machine_spec_hash": machine_spec_hash, "program_commit_id": program_commit_id, "git_sha": git_sha, "generator_version": generator_version, "test_spec_hash": test_spec_hash},
+        "gates": gates,
+        "steps": steps,
+        "result_policy": "任何外部证据默认 manual_unverified；签名升级由集中验证流程人工完成，不由上传动作自动升级。",
+        "claim_boundary": f"本包只为 {target_profile.get('brand')} {target_profile.get('series')} 的集中外部验证提供可追溯清单；{vendor_tool} 编译/模拟、真实硬件和电气工程师确认尚未验证。",
+    }
+    return stable_json_bytes(payload)
+
+
+def render_validation_checklist(package: dict[str, Any]) -> bytes:
+    """Render the immutable validation package as a human-readable checklist."""
+    target = package["target"]
+    baseline = package["baseline"]
+    lines = [
+        "# 控谱集中外部验证执行清单",
+        "",
+        f"目标：{target['brand']} {target['series']} {target['model']}",
+        f"厂商工具：{target['vendor_tool']}",
+        f"MachineSpec SHA-256：{baseline['machine_spec_hash']}",
+        f"Program Commit：{baseline['git_sha']}",
+        f"生成器：{baseline['generator_version']}",
+        f"TestSpec SHA-256：{baseline['test_spec_hash']}",
+        "",
+        "验证等级：`pending_external`。不得将本清单或参考模拟表述为厂商编译、硬件实测或安全确认通过。",
+        "",
+        "## 执行步骤",
+        "",
+        "| 状态 | 步骤 | 负责人 | 预期结果 | 证据 | 实际结果 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for step in package["steps"]:
+        lines.append(f"| [ ] | {step['title']} | {step['owner']} | {step['expected']} | {step['evidence']} |  |")
+    lines.extend(["", "## 外部验证门", ""])
+    for gate in package["gates"]:
+        lines.extend([f"- [ ] **{gate['title']}**：{gate['required_evidence']}"])
+    lines.extend(["", "## 回退", "", "发生失败时保留原工程副本、日志和截图；创建新 Issue/分支修复并新增自动回归，禁止覆盖锁定规格、既有 Commit 或证据原件。", ""])
+    return "\n".join(lines).encode("utf-8")
+
+
 def stable_json_bytes(value: Any) -> bytes:
     return (
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
