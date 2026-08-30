@@ -24,6 +24,8 @@
 - P07 创建 manual_required 编译准备任务，显示 Adapter、环境快照、Commit 和诊断；人工导入日志/截图后仍为 manual_unverified。
 - P08 运行版本化 TestSpec DSL 的控谱参考逻辑模拟，保存 automatic_reference 结果、用例汇总、周期 Trace 和工件哈希；不得称为 GX Simulator3。
 - P12 只读检测平台、Python、受控环境变量路径和 Adapter 能力；不启动厂商程序、不保存 PLC 写入凭据。
+- P09 生成绑定当前 Commit 的不可变候选 ZIP，Manifest 已记录锁定规格、原始 Excel、Control IR/TestSpec、自动审核、静态审计、参考模拟和人工证据哈希；其状态仍为 external_validation_required。
+- P10 生成目标指纹与只读变量映射，并接受离线 JSON 快照形成 manual_unverified 证据；当前未连接 PLC。由证据派生的调试工作只进入新的 engineer/commissioning-* 分支。
 
 集中验证时必须记录精确的 Program Commit、MachineSpec 哈希、Control IR/TestSpec 哈希、生成器版本、自动审核 ID/input_hash/report SHA-256、参考模拟引擎版本和外部证据 SHA-256，不能把历史结果复制到新的基线。
 
@@ -48,6 +50,7 @@
 | V03 | 诊断映射 | 人为制造一处语法或变量错误后重编译 | 文件、POU、行号和错误码能映射回生成物 | 两次日志、修复 Commit | 待填 |
 | V04 | 重复性 | 同一 Commit 连续编译至少 5 次 | 结果一致，不修改原始黄金工程 | 运行台账、哈希 | 待填 |
 | V05 | M3 证据对账 | 对照 P07 的 Commit、自动审核报告、诊断和外部证据哈希 | automatic、manual_unverified 与 pending_external 未被错误升级 | API 导出、报告原件、哈希清单 | 待填 |
+| V06 | 候选包复核 | 解压 P09 候选 ZIP，逐项核对 Manifest、文件哈希、Commit 和工具版本 | 内容完整且哈希一致；仍标记 external_validation_required | 候选 ZIP、Manifest、复核记录 | 待填 |
 
 若 V01 无稳定自动导入接口，记录最小人工导入步骤作为正式降级门，不使用脆弱 UI 自动化伪装成官方能力。
 
@@ -60,6 +63,7 @@
 | S03 | TestSpec 正常循环 | 驱动输入与反馈并记录输出、工步、超时 | 正常序列符合黄金工程预期 | Trace、测试报告 | 待填 |
 | S04 | 异常与互锁 | 缺反馈、互锁禁止、复位等受控场景 | 输出被抑制，异常与复位符合约定 | Trace、结果表 | 待填 |
 | S05 | 参考模拟对照 | 用同一 TestSpec 在控谱参考模拟与 GX Simulator3 分别运行 | 差异逐项记录；参考结果不替代厂商结果 | 两侧 Trace、版本记录 | 待填 |
+| S06 | 只读快照对照 | 在工程师控制的厂商工具中读取白名单变量，导出离线 JSON 后导入 P10 | 目标指纹、类型和变量映射一致；系统未执行写入 | 导出文件、P10 证据哈希、对照表 | 待填 |
 | H01 | 台架核对 | 断电状态核对 CPU、模块、端子、地址、电源和保护 | 与项目配置完全一致 | BOM、接线照片、核对签名 | 待填 |
 | H02 | 下载前审查 | 电气工程师审查普通控制逻辑和目标 PLC | 明确批准的工程副本和回退文件 | 审批记录、备份哈希 | 待填 |
 | H03 | 低风险 I/O | 由工程师下载并在安全负载上逐点检查 | DI/DO 极性、地址、失电状态正确 | I/O 表、录像 | 待填 |
@@ -68,7 +72,7 @@
 
 ## 证据与回退
 
-验证材料放在不进 Git 的 .private/validation/<date>/，按 environment、golden-import、automated-review、compile、simulation、hardware 和 signoff 分类。每项至少记录项目 ID、MachineSpec revision/hash、Program Commit、Control IR/TestSpec 哈希、生成器/自动审核/模拟引擎版本、厂商软件版本、PLC 与模块信息、操作者、时间、结果和原始日志路径。
+验证材料放在不进 Git 的 .private/validation/<date>/，按 environment、golden-import、automated-review、delivery-candidate、compile、simulation、read-only-snapshot、hardware 和 signoff 分类。每项至少记录项目 ID、MachineSpec revision/hash、Program Commit、Control IR/TestSpec 哈希、候选 Manifest/ZIP 哈希、生成器/自动审核/模拟引擎版本、厂商软件版本、PLC 与模块信息、操作者、时间、结果和原始日志路径。
 
 1. 任一目标、版本或接线不一致时停止，不尝试猜测修复。
 2. 编译与模拟失败保留原日志和工程副本，创建 Issue 与新分支，不覆盖生成基线。

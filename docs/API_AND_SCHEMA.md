@@ -54,6 +54,13 @@
 | 外部证据 | POST /api/v1/compile-runs/{run_id}/evidence |
 | 参考模拟 | POST/GET /api/v1/projects/{project_id}/simulation-runs、GET /api/v1/simulation-runs/{run_id} |
 | Trace | GET /api/v1/simulation-runs/{run_id}/trace |
+| 交付候选 | POST/GET /api/v1/projects/{project_id}/release-candidates |
+| 候选详情 | GET /api/v1/release-candidates/{candidate_id} |
+| 只读监控计划 | POST/GET /api/v1/projects/{project_id}/monitoring-plans |
+| 计划详情 | GET /api/v1/monitoring-plans/{plan_id} |
+| 离线快照 | POST /api/v1/monitoring-plans/{plan_id}/snapshots |
+| 监控证据 | GET /api/v1/monitoring-plans/{plan_id}/evidence |
+| 调试任务 | POST /api/v1/monitoring-evidence/{evidence_id}/commissioning-tasks |
 
 Adapter v1 能力固定为 detect_environment、get_capabilities、prepare_workspace_copy、compile、get_diagnostics、start_simulation、get_trace、export_vendor_project。ManualAdapter 对厂商操作只返回 manual_required/unverified，不会启动未知程序；reference 的模拟入口只代表 automatic_reference。
 
@@ -66,6 +73,12 @@ AutomatedReviewRun 以 generation_run_id、review_version 和 input_hash 唯一�
 编译准备状态为 manual_required，前置条件是生成任务处于 review_ready、当前不可变 Commit 的项目自动审核存在且状态为 passed。证据上传携带 expected_revision，原件按 SHA-256 去重保存，任何证据均保持 manual_unverified。
 
 参考模拟状态为 review_ready 或 failed，使用版本化 TestSpec DSL（当前 1.0）和受限表达式/赋值语法；不执行任意 Python、ST、Shell 或外部进程。结果绑定 ProgramCommit、TestSpecRevision、Control IR 和引擎版本，并保存不可变周期 Trace 工件。
+
+交付候选创建必须绑定当前 GenerationRun、当前分支 head Commit、passed 自动审核、无 blocker 静态审计和当前 Commit 的 review_ready 参考模拟。分支存在未提交修改时返回 409。候选 ZIP 使用固定时间戳和排序条目生成，MANIFEST.json 记录基线、外部验证门、文件 SHA-256 与大小；相同 project_id + input_hash 只复用原候选。状态固定为 external_validation_required，验证等级固定为 automatic_package。
+
+只读监控计划一对一绑定 ReleaseCandidate，变量白名单来自候选 Control IR，每项访问权限固定为 read_only。target_fingerprint 同时绑定项目、PLC 目标、候选 Manifest 和变量映射哈希。快照提交必须携带匹配指纹和 expected_plan_revision，只接受白名单内的 bool/int/float 离线值；证据固定为 manual_unverified。
+
+CommissioningTask 只能由不可变 MonitoringEvidence 创建。系统从候选 ProgramCommit 派生 engineer/commissioning-* 分支，并复制 Control IR、TestSpec、ProgramArtifact 和 TraceLink 基线到新的 GenerationRun；后续修改形成新 Commit 和自动审核，不覆盖候选或来源历史。
 
 ## MachineSpec v1
 
@@ -100,5 +113,7 @@ Excel 工作表：
 - unverified：厂商 Adapter、编译准备和环境能力尚未由真实工具验证。
 - manual_unverified：外部日志、截图和报告已导入但没有集中验证签名。
 - automatic：仅指项目级确定性代码审核已运行并满足其检查范围；不包含厂商工具、真实 PLC 或电气工程师确认。
+- automatic_package：只表示候选 ZIP 已通过本机确定性打包和哈希门禁；不表示正式发布或厂商通过。
+- awaiting_external_read_only_connection：只表示已生成未来只读连接所需的计划与指纹；当前没有在线连接。
 - 本机未安装或未配置 GX Works3、GX Simulator3、MX Component 时，API 返回 unavailable 或 manual_required，不猜测版本、不执行任意命令。
 - 详见 Adapter 安全与依赖矩阵文档。
