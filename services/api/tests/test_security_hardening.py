@@ -105,13 +105,61 @@ def test_git_commands_are_noninteractive_bounded_and_timeout(monkeypatch, tmp_pa
     assert timeout_process.wait_calls == 2
 
 
+def test_git_combined_stdout_and_stderr_share_one_output_budget(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class Stream:
+        def __init__(self, value: str):
+            self.value = value
+            self.reads = 0
+
+        def read(self, _size: int) -> str:
+            if self.reads:
+                return ""
+            self.reads += 1
+            return self.value
+
+        def close(self) -> None:
+            return None
+
+    class Process:
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.stdout = Stream("a" * 6)
+            self.stderr = Stream("b" * 6)
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self) -> None:
+            return None
+
+    monkeypatch.setattr(repository, "GIT_OUTPUT_LIMIT_BYTES", 10)
+    monkeypatch.setattr(repository.subprocess, "Popen", lambda *args, **kwargs: Process())
+    with pytest.raises(repository.RepositoryError, match="输出超过"):
+        repository._run(tmp_path, "status")
+
+
 def test_git_output_and_repository_file_guards(monkeypatch, tmp_path: Path) -> None:
     with pytest.raises(repository.RepositoryError, match="输出超过"):
         repository._check_output_size("x" * (repository.GIT_OUTPUT_LIMIT_BYTES + 1), tmp_path)
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    for value in ("", ".", "../escape", "/absolute", "C:/absolute", ".git/config", "a//b"):
+    for value in (
+        "",
+        ".",
+        "../escape",
+        "/absolute",
+        "C:/absolute",
+        ".git/config",
+        "a//b",
+        "CON.txt",
+        "trailing./file.st",
+        "bad?/file.st",
+        "a\x00b.st",
+    ):
         with pytest.raises(repository.RepositoryError):
             repository.safe_file(repo, value)
 
@@ -150,6 +198,58 @@ def test_repository_size_and_tree_metadata_guards(monkeypatch, tmp_path: Path) -
     valid_tree = b"100644 blob " + b"b" * 40 + b" 4\tmain.st\0"
     monkeypatch.setattr(repository, "_run_bytes", lambda *_args: valid_tree)
     assert repository.list_files_at_commit(repo, "a" * 40) == ["main.st"]
+
+    symlink_tree = b"120000 blob " + b"b" * 40 + b" 10\tlinked.st\0"
+    monkeypatch.setattr(repository, "_run_bytes", lambda *_args: symlink_tree)
+    with pytest.raises(repository.RepositoryError, match="unsupported"):
+        repository.list_files_at_commit(repo, "a" * 40)
+
+    backslash_tree = b"100644 blob " + b"b" * 40 + b" 4\tdir\\main.st\0"
+    monkeypatch.setattr(repository, "_run_bytes", lambda *_args: backslash_tree)
+    with pytest.raises(repository.RepositoryError, match="backslash"):
+        repository.list_files_at_commit(repo, "a" * 40)
+
+
+def test_write_files_enforces_projected_repository_budget_and_duplicate_paths(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "first.st").write_text("1234", encoding="utf-8")
+    (repo / "second.st").write_text("5678", encoding="utf-8")
+    monkeypatch.setattr(repository, "REPOSITORY_FILE_LIMIT", 2)
+    monkeypatch.setattr(repository, "REPOSITORY_TOTAL_LIMIT_BYTES", 10)
+
+    repository.write_files(repo, {"first.st": "12"})
+    assert (repo / "first.st").read_text(encoding="utf-8") == "12"
+
+    with pytest.raises(repository.RepositoryError, match="数量超过"):
+        repository.write_files(repo, {"third.st": "1"})
+    assert not (repo / "third.st").exists()
+
+    with pytest.raises(repository.RepositoryError, match="总体积超过"):
+        repository.write_files(repo, {"first.st": "1234567"})
+    assert (repo / "first.st").read_text(encoding="utf-8") == "12"
+
+    with pytest.raises(repository.RepositoryError, match="Duplicate"):
+        repository.write_files(repo, {"nested/main.st": "a", "nested\\main.st": "b"})
+
+
+def test_checkout_branch_refuses_to_switch_a_dirty_worktree(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    repository._run(repo, "init", "-b", "main")
+    repository._run(repo, "config", "user.name", "Kongpu Test")
+    repository._run(repo, "config", "user.email", "test@kongpu.invalid")
+    (repo / "main.st").write_text("initial", encoding="utf-8")
+    repository._run(repo, "add", "main.st")
+    repository._run(repo, "commit", "-m", "initial")
+    (repo / "main.st").write_text("modified", encoding="utf-8")
+
+    with pytest.raises(repository.RepositoryError, match="uncommitted"):
+        repository.checkout_branch(repo, "feature/safe")
+    assert repository._run(repo, "branch", "--show-current") == "main"
+    assert (repo / "main.st").read_text(encoding="utf-8") == "modified"
 
 
 def test_repository_guard_serializes_same_repo_but_not_other_repo(tmp_path: Path) -> None:

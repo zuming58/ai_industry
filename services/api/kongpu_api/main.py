@@ -2528,9 +2528,10 @@ def create_commissioning_task(
     if duplicate is not None:
         raise api_error("COMMISSIONING_BRANCH_CONFLICT", "调试分支已存在但任务记录缺失", 409)
     try:
-        if not is_working_tree_clean(repo):
-            raise api_error("PROGRAM_BRANCH_DIRTY", "程序仓库存在未提交修改", 409)
-        checkout_branch(repo, branch_name, source_commit.git_sha)
+        with repository_guard(repo):
+            if not is_working_tree_clean(repo):
+                raise api_error("PROGRAM_BRANCH_DIRTY", "程序仓库存在未提交修改", 409)
+            checkout_branch(repo, branch_name, source_commit.git_sha)
     except RepositoryError as exc:
         raise api_error("REPOSITORY_ERROR", str(exc), 422)
     branch = ProgramBranch(
@@ -3943,27 +3944,28 @@ def create_restore_branch(
     if source_test_spec is None:
         raise api_error("TEST_SPEC_NOT_FOUND", "历史 Commit 缺少 TestSpec", 409)
     repo = ensure_repository(runtime_settings, workspace.project_id)
-    if source_branch.status != "clean" or not is_working_tree_clean(repo):
-        raise api_error(
-            "PROGRAM_BRANCH_DIRTY",
-            "程序仓库存在未提交修改，不能创建恢复分支",
-            409,
-            action="先提交当前工作分支修改",
-        )
     branch_name = payload.name or (
         f"restore/{source_commit.git_sha[:12]}-{new_id()[:8]}"
     )
     try:
-        validate_branch_name(branch_name)
-        duplicate = session.scalar(
-            select(ProgramBranch).where(
-                ProgramBranch.workspace_id == workspace.id,
-                ProgramBranch.name == branch_name,
+        with repository_guard(repo):
+            if source_branch.status != "clean" or not is_working_tree_clean(repo):
+                raise api_error(
+                    "PROGRAM_BRANCH_DIRTY",
+                    "程序仓库存在未提交修改，不能创建恢复分支",
+                    409,
+                    action="先提交当前工作分支修改",
+                )
+            validate_branch_name(branch_name)
+            duplicate = session.scalar(
+                select(ProgramBranch).where(
+                    ProgramBranch.workspace_id == workspace.id,
+                    ProgramBranch.name == branch_name,
+                )
             )
-        )
-        if duplicate is not None:
-            raise api_error("BRANCH_ALREADY_EXISTS", "恢复分支已存在", 409)
-        checkout_branch(repo, branch_name, source_commit.git_sha)
+            if duplicate is not None:
+                raise api_error("BRANCH_ALREADY_EXISTS", "恢复分支已存在", 409)
+            checkout_branch(repo, branch_name, source_commit.git_sha)
     except RepositoryError as exc:
         raise api_error("REPOSITORY_ERROR", str(exc), 422)
 

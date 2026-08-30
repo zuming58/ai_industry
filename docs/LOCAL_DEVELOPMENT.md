@@ -78,7 +78,7 @@ Playwright 启动独立的 8010 API、5174 Web 和临时 SQLite 数据目录，�
 
     py -3.12 scripts/restore-local.py F:\Backups\kongpu-backup.zip --data-dir F:\Codex\ai_industry\.local-data --confirm-overwrite
 
-恢复脚本逐个覆盖 ZIP 中明确列出的数据库、工件和仓库文件，不删除目录或无关文件。建议先恢复到单独临时目录并检查项目数、Alembic 版本和关键工件。
+恢复脚本只接受带 `backup-manifest.json` 的 `kongpu-local-backup/v1` 归档。它先完整检查路径、重复条目、符号链接、压缩与解压大小、逐项 SHA-256 和 SQLite `PRAGMA quick_check`；全部通过后，才逐个原子替换 ZIP 中明确列出的数据库、工件和仓库文件。旧的无清单归档会被拒绝，任一预检失败都不会覆盖现有文件，恢复过程也不删除目录或无关文件。建议先恢复到单独临时目录并检查项目数、Alembic 版本和关键工件。
 
 ## 私有黄金项目
 

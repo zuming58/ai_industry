@@ -8,6 +8,7 @@ import getpass
 import threading
 import time
 import uuid
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 from pathlib import PurePosixPath, PureWindowsPath
@@ -21,6 +22,11 @@ GIT_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
 REPOSITORY_FILE_LIMIT = 2_000
 REPOSITORY_TOTAL_LIMIT_BYTES = 100 * 1024 * 1024
 REPOSITORY_FILE_LIMIT_BYTES = 8 * 1024 * 1024
+WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 _REPOSITORY_LOCKS_GUARD = threading.Lock()
 _REPOSITORY_LOCKS: dict[str, threading.RLock] = {}
 
@@ -79,17 +85,21 @@ def _run_bounded(repo: Path, args: tuple[str, ...], *, text_mode: bool) -> tuple
     stdout_parts: list[str | bytes] = []
     stderr_parts: list[str | bytes] = []
     overflow = threading.Event()
+    output_size_guard = threading.Lock()
+    total_output_size = 0
 
     def drain(stream, parts: list[str | bytes]) -> None:
-        total = 0
+        nonlocal total_output_size
         try:
             while True:
                 chunk = stream.read(65536)
                 if not chunk:
                     return
                 size = len(chunk.encode("utf-8", errors="replace")) if isinstance(chunk, str) else len(chunk)
-                total += size
-                if total > GIT_OUTPUT_LIMIT_BYTES:
+                with output_size_guard:
+                    total_output_size += size
+                    exceeded = total_output_size > GIT_OUTPUT_LIMIT_BYTES
+                if exceeded:
                     overflow.set()
                     try:
                         process.kill()
@@ -155,7 +165,10 @@ def ensure_repository(settings: Settings, project_id: str) -> Path:
     path = repository_path(settings, project_id)
     with repository_guard(path):
         path.mkdir(parents=True, exist_ok=True)
-        if not (path / ".git").is_dir():
+        git_path = path / ".git"
+        if git_path.is_symlink():
+            raise RepositoryError("Repository .git path contains a symbolic link")
+        if not git_path.is_dir():
             _run(path, "init", "-b", "main")
             _run(path, "config", "user.name", "Kongpu Local")
             _run(path, "config", "user.email", "local@kongpu.invalid")
@@ -171,13 +184,18 @@ def validate_branch_name(name: str) -> str:
 def checkout_branch(repo: Path, name: str, base_commit: str | None = None) -> None:
     with repository_guard(repo):
         name = validate_branch_name(name)
+        current = _run(repo, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+        if current == name:
+            return
+        if _run(repo, "status", "--porcelain"):
+            raise RepositoryError("Repository has uncommitted changes; branch switch refused")
         exists = _run(repo, "show-ref", "--verify", f"refs/heads/{name}", check=False)
         if exists:
             _run(repo, "switch", name)
             return
         args = ["switch", "-c", name]
         if base_commit:
-            args.append(base_commit)
+            args.append(_verified_commit(repo, base_commit))
         _run(repo, *args)
 
 
@@ -190,12 +208,21 @@ def safe_file(repo: Path, relative: str) -> Path:
     parts = normalized.split("/")
     if (
         not normalized
+        or len(normalized) > 512
+        or normalized != unicodedata.normalize("NFC", normalized)
         or normalized.startswith("/")
         or posix.is_absolute()
         or windows.is_absolute()
         or windows.drive
         or any(part in {"", ".", ".."} for part in parts)
         or any(part.lower() == ".git" for part in parts)
+        or any(
+            len(part) > 255
+            or part.endswith((" ", "."))
+            or any(ord(character) < 32 or character in '<>:"|?*' for character in part)
+            or part.split(".", 1)[0].upper() in WINDOWS_RESERVED_NAMES
+            for part in parts
+        )
     ):
         raise RepositoryError("Invalid repository file path")
     root = repo.resolve()
@@ -210,29 +237,87 @@ def safe_file(repo: Path, relative: str) -> Path:
     return path
 
 
+def _worktree_inventory(repo: Path) -> dict[str, int]:
+    """Return and validate regular work-tree files while holding the repo lock."""
+    root = repo.resolve()
+    if root.is_symlink() or not root.is_dir():
+        raise RepositoryError("Repository root is not a regular directory")
+    inventory: dict[str, int] = {}
+    total_size = 0
+    for current, directory_names, file_names in os.walk(root, followlinks=False):
+        current_path = Path(current)
+        directory_names[:] = sorted(directory_names)
+        file_names[:] = sorted(file_names)
+        if current_path == root:
+            directory_names[:] = [name for name in directory_names if name != ".git"]
+        for directory_name in directory_names:
+            directory = current_path / directory_name
+            if directory.is_symlink():
+                raise RepositoryError("Repository contains a symbolic-link directory")
+        for file_name in file_names:
+            path = current_path / file_name
+            if path.is_symlink() or not path.is_file():
+                raise RepositoryError("Repository contains a non-regular work-tree entry")
+            relative = path.relative_to(root).as_posix()
+            safe_file(root, relative)
+            key = relative.casefold()
+            if key in inventory:
+                raise RepositoryError("Repository contains case-colliding paths")
+            size = path.stat(follow_symlinks=False).st_size
+            if size > REPOSITORY_FILE_LIMIT_BYTES:
+                raise RepositoryError("仓库文件超过安全限制")
+            inventory[key] = size
+            total_size += size
+            if len(inventory) > REPOSITORY_FILE_LIMIT:
+                raise RepositoryError("仓库文件数量超过安全限制")
+            if total_size > REPOSITORY_TOTAL_LIMIT_BYTES:
+                raise RepositoryError("仓库总体积超过安全限制")
+    return inventory
+
+
 def write_files(repo: Path, files: dict[str, str]) -> None:
     if len(files) > REPOSITORY_FILE_LIMIT:
         raise RepositoryError("仓库写入文件数量超过安全限制")
-    total_size = 0
-    prepared: list[tuple[Path, bytes]] = []
+    prepared: list[tuple[str, Path, bytes]] = []
+    normalized_keys: set[str] = set()
     for relative, content in files.items():
+        if not isinstance(relative, str) or not isinstance(content, str):
+            raise RepositoryError("Invalid repository file input")
+        normalized = relative.replace("\\", "/")
+        path = safe_file(repo, relative)
+        key = normalized.casefold()
+        if key in normalized_keys:
+            raise RepositoryError("Duplicate repository file path")
+        normalized_keys.add(key)
         encoded = content.encode("utf-8")
-        size = len(encoded)
-        if size > REPOSITORY_FILE_LIMIT_BYTES:
+        if len(encoded) > REPOSITORY_FILE_LIMIT_BYTES:
             raise RepositoryError("仓库文件超过安全限制")
-        total_size += size
-        if total_size > REPOSITORY_TOTAL_LIMIT_BYTES:
-            raise RepositoryError("仓库写入总体积超过安全限制")
-        prepared.append((safe_file(repo, relative), encoded))
+        prepared.append((normalized, path, encoded))
     with repository_guard(repo):
+        inventory = _worktree_inventory(repo)
+        projected_count = len(inventory)
+        projected_total = sum(inventory.values())
+        for normalized, path, encoded in prepared:
+            key = normalized.casefold()
+            if key in inventory:
+                projected_total -= inventory[key]
+            else:
+                projected_count += 1
+            projected_total += len(encoded)
+        if projected_count > REPOSITORY_FILE_LIMIT:
+            raise RepositoryError("仓库文件数量超过安全限制")
+        if projected_total > REPOSITORY_TOTAL_LIMIT_BYTES:
+            raise RepositoryError("仓库总体积超过安全限制")
         temporary_files: list[Path] = []
         try:
-            for path, encoded in prepared:
+            for _normalized, path, encoded in prepared:
                 path.parent.mkdir(parents=True, exist_ok=True)
+                safe_file(repo, path.relative_to(repo.resolve()).as_posix())
                 temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
                 temporary.write_bytes(encoded)
                 temporary_files.append(temporary)
-            for (path, _encoded), temporary in zip(prepared, temporary_files, strict=True):
+            for (_normalized, path, _encoded), temporary in zip(prepared, temporary_files, strict=True):
+                safe_file(repo, path.relative_to(repo.resolve()).as_posix())
                 os.replace(temporary, path)
         finally:
             for temporary in temporary_files:
@@ -260,68 +345,81 @@ def _verified_commit(repo: Path, sha: str) -> str:
 
 
 def list_files_at_commit(repo: Path, sha: str) -> list[str]:
-    resolved = _verified_commit(repo, sha)
-    output = _run_bytes(repo, "ls-tree", "-r", "-l", "-z", resolved)
-    paths: list[str] = []
-    total_size = 0
-    for value in (entry for entry in output.split(b"\0") if entry):
-        metadata, separator, raw_path = value.partition(b"\t")
-        fields = metadata.split()
-        if not separator or len(fields) != 4 or fields[1] != b"blob":
-            raise RepositoryError("Git tree contains an unsupported entry")
-        try:
-            size = int(fields[3])
-            path = raw_path.decode("utf-8", errors="strict")
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise RepositoryError("Git tree metadata is invalid") from exc
-        if size > REPOSITORY_FILE_LIMIT_BYTES:
-            raise RepositoryError("仓库文件超过安全限制")
-        paths.append(path)
-        total_size += size
-        if len(paths) > REPOSITORY_FILE_LIMIT:
-            raise RepositoryError("仓库文件数量超过安全限制")
-        if total_size > REPOSITORY_TOTAL_LIMIT_BYTES:
-            raise RepositoryError("仓库总体积超过安全限制")
-    for path in paths:
-        safe_file(repo, path)
-    return sorted(paths)
+    with repository_guard(repo):
+        resolved = _verified_commit(repo, sha)
+        output = _run_bytes(repo, "ls-tree", "-r", "-l", "-z", resolved)
+        paths: list[str] = []
+        seen_keys: set[str] = set()
+        total_size = 0
+        for value in (entry for entry in output.split(b"\0") if entry):
+            metadata, separator, raw_path = value.partition(b"\t")
+            fields = metadata.split()
+            if (
+                not separator
+                or len(fields) != 4
+                or fields[0] not in {b"100644", b"100755"}
+                or fields[1] != b"blob"
+            ):
+                raise RepositoryError("Git tree contains an unsupported entry")
+            try:
+                size = int(fields[3])
+                path = raw_path.decode("utf-8", errors="strict")
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise RepositoryError("Git tree metadata is invalid") from exc
+            if "\\" in path:
+                raise RepositoryError("Git tree contains a backslash path")
+            safe_file(repo, path)
+            key = path.casefold()
+            if key in seen_keys:
+                raise RepositoryError("Git tree contains case-colliding paths")
+            seen_keys.add(key)
+            if size > REPOSITORY_FILE_LIMIT_BYTES:
+                raise RepositoryError("仓库文件超过安全限制")
+            paths.append(path)
+            total_size += size
+            if len(paths) > REPOSITORY_FILE_LIMIT:
+                raise RepositoryError("仓库文件数量超过安全限制")
+            if total_size > REPOSITORY_TOTAL_LIMIT_BYTES:
+                raise RepositoryError("仓库总体积超过安全限制")
+        return sorted(paths)
 
 
 def read_file_at_commit(repo: Path, sha: str, relative: str) -> str:
-    resolved = _verified_commit(repo, sha)
-    normalized = safe_file(repo, relative).relative_to(repo.resolve()).as_posix()
-    raw_size = _run(repo, "cat-file", "-s", f"{resolved}:{normalized}")
-    try:
-        size = int(raw_size)
-    except ValueError as exc:
-        raise RepositoryError("Git blob size is invalid") from exc
-    if size > REPOSITORY_FILE_LIMIT_BYTES:
-        raise RepositoryError("仓库文件超过安全限制")
-    return _run_bytes(repo, "show", f"{resolved}:{normalized}").decode(
-        "utf-8", errors="strict"
-    )
+    with repository_guard(repo):
+        resolved = _verified_commit(repo, sha)
+        normalized = safe_file(repo, relative).relative_to(repo.resolve()).as_posix()
+        raw_size = _run(repo, "cat-file", "-s", f"{resolved}:{normalized}")
+        try:
+            size = int(raw_size)
+        except ValueError as exc:
+            raise RepositoryError("Git blob size is invalid") from exc
+        if size > REPOSITORY_FILE_LIMIT_BYTES:
+            raise RepositoryError("仓库文件超过安全限制")
+        content = _run_bytes(repo, "show", f"{resolved}:{normalized}")
+        if len(content) != size:
+            raise RepositoryError("Git blob size changed while being read")
+        return content.decode("utf-8", errors="strict")
 
 
 def list_files(repo: Path) -> list[dict[str, object]]:
     with repository_guard(repo):
         result = []
-        total_size = 0
         root = repo.resolve()
-        for path in sorted(item for item in root.rglob("*") if item.is_file() and not item.is_symlink() and ".git" not in item.parts):
-            if len(result) >= REPOSITORY_FILE_LIMIT:
-                raise RepositoryError("仓库文件数量超过安全限制")
-            relative = path.relative_to(root).as_posix()
-            safe_file(root, relative)
-            disk_size = path.stat().st_size
-            if disk_size > REPOSITORY_FILE_LIMIT_BYTES:
-                raise RepositoryError("仓库文件超过安全限制")
-            total_size += disk_size
-            if total_size > REPOSITORY_TOTAL_LIMIT_BYTES:
-                raise RepositoryError("仓库总体积超过安全限制")
-            content = path.read_bytes()
-            if len(content) != disk_size:
-                raise RepositoryError("仓库文件读取期间发生变化")
-            result.append({"path": relative, "size_bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()})
+        _worktree_inventory(repo)
+        for current, directory_names, file_names in os.walk(root, followlinks=False):
+            current_path = Path(current)
+            directory_names[:] = sorted(directory_names)
+            file_names[:] = sorted(file_names)
+            if current_path == root:
+                directory_names[:] = [name for name in directory_names if name != ".git"]
+            for file_name in file_names:
+                path = current_path / file_name
+                relative = path.relative_to(root).as_posix()
+                disk_size = path.stat(follow_symlinks=False).st_size
+                content = path.read_bytes()
+                if len(content) != disk_size:
+                    raise RepositoryError("仓库文件读取期间发生变化")
+                result.append({"path": relative, "size_bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()})
         return result
 
 
@@ -346,27 +444,33 @@ def create_generated_commit(
 
 
 def commit_diff(repo: Path, sha: str) -> str:
-    return _run(repo, "show", "--format=fuller", "--stat", "--patch", sha)
+    with repository_guard(repo):
+        resolved = _verified_commit(repo, sha)
+        return _run(repo, "show", "--format=fuller", "--stat", "--patch", resolved)
 
 
 def compare_commits(repo: Path, base_sha: str, target_sha: str) -> str:
-    base = _verified_commit(repo, base_sha)
-    target = _verified_commit(repo, target_sha)
-    return _run(
-        repo,
-        "diff",
-        "--stat",
-        "--patch",
-        "--find-renames",
-        base,
-        target,
-    )
+    with repository_guard(repo):
+        base = _verified_commit(repo, base_sha)
+        target = _verified_commit(repo, target_sha)
+        return _run(
+            repo,
+            "diff",
+            "--stat",
+            "--patch",
+            "--find-renames",
+            base,
+            target,
+        )
 
 
 def parent_of(repo: Path, sha: str) -> str | None:
-    value = _run(repo, "rev-parse", f"{sha}^", check=False)
-    return value or None
+    with repository_guard(repo):
+        resolved = _verified_commit(repo, sha)
+        value = _run(repo, "rev-parse", f"{resolved}^", check=False)
+        return value or None
 
 
 def is_working_tree_clean(repo: Path) -> bool:
-    return not bool(_run(repo, "status", "--porcelain"))
+    with repository_guard(repo):
+        return not bool(_run(repo, "status", "--porcelain"))
