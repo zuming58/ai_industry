@@ -1,0 +1,288 @@
+{
+  "coverage": {
+    "npm": "all package-lock v3 installation entries and resolvable declared dependency edges",
+    "python": "complete hash-pinned pip wheel closure for CPython 3.12 on Windows AMD64"
+  },
+  "direct_dependencies": {
+    "npm": [
+      {
+        "bom_ref": "npm:@phosphor-icons/react@2.1.10:67d562b9823004d7",
+        "license": "MIT",
+        "name": "@phosphor-icons/react",
+        "requested": "^2.1.10",
+        "scope": "runtime",
+        "version": "2.1.10"
+      },
+      {
+        "bom_ref": "npm:@tanstack/react-query@5.102.8:06d2f564d6a4a043",
+        "license": "MIT",
+        "name": "@tanstack/react-query",
+        "requested": "^5.102.8",
+        "scope": "runtime",
+        "version": "5.102.8"
+      },
+      {
+        "bom_ref": "npm:@vitejs/plugin-react@5.0.4:62fcf17c74e624b5",
+        "license": "MIT",
+        "name": "@vitejs/plugin-react",
+        "requested": "5.0.4",
+        "scope": "runtime",
+        "version": "5.0.4"
+      },
+      {
+        "bom_ref": "npm:openapi-fetch@0.17.0:b1259a819828a59d",
+        "license": "MIT",
+        "name": "openapi-fetch",
+        "requested": "^0.17.0",
+        "scope": "runtime",
+        "version": "0.17.0"
+      },
+      {
+        "bom_ref": "npm:react@19.2.0:c32755efedd6ef6b",
+        "license": "MIT",
+        "name": "react",
+        "requested": "19.2.0",
+        "scope": "runtime",
+        "version": "19.2.0"
+      },
+      {
+        "bom_ref": "npm:react-dom@19.2.0:d5a4b102c0309762",
+        "license": "MIT",
+        "name": "react-dom",
+        "requested": "19.2.0",
+        "scope": "runtime",
+        "version": "19.2.0"
+      },
+      {
+        "bom_ref": "npm:react-router-dom@7.18.3:3f107503211aa304",
+        "license": "MIT",
+        "name": "react-router-dom",
+        "requested": "^7.18.3",
+        "scope": "runtime",
+        "version": "7.18.3"
+      },
+      {
+        "bom_ref": "npm:vite@6.4.2:bae5313630017d85",
+        "license": "MIT",
+        "name": "vite",
+        "requested": "6.4.2",
+        "scope": "runtime",
+        "version": "6.4.2"
+      },
+      {
+        "bom_ref": "npm:@playwright/test@1.62.1:fff88d9a2821b3f3",
+        "license": "Apache-2.0",
+        "name": "@playwright/test",
+        "requested": "^1.62.1",
+        "scope": "development",
+        "version": "1.62.1"
+      },
+      {
+        "bom_ref": "npm:@testing-library/jest-dom@7.0.1:184da177ff2fc2ab",
+        "license": "MIT",
+        "name": "@testing-library/jest-dom",
+        "requested": "^7.0.1",
+        "scope": "development",
+        "version": "7.0.1"
+      },
+      {
+        "bom_ref": "npm:@testing-library/react@16.3.3:b29f6fb6ec5815d8",
+        "license": "MIT",
+        "name": "@testing-library/react",
+        "requested": "^16.3.3",
+        "scope": "development",
+        "version": "16.3.3"
+      },
+      {
+        "bom_ref": "npm:@types/react@19.2.18:2300dff8f135f28c",
+        "license": "MIT",
+        "name": "@types/react",
+        "requested": "^19.2.18",
+        "scope": "development",
+        "version": "19.2.18"
+      },
+      {
+        "bom_ref": "npm:@types/react-dom@19.2.5:278d2b698c23d5ce",
+        "license": "MIT",
+        "name": "@types/react-dom",
+        "requested": "^19.2.5",
+        "scope": "development",
+        "version": "19.2.5"
+      },
+      {
+        "bom_ref": "npm:jsdom@30.0.1:ee877259f1e6399b",
+        "license": "MIT",
+        "name": "jsdom",
+        "requested": "^30.0.1",
+        "scope": "development",
+        "version": "30.0.1"
+      },
+      {
+        "bom_ref": "npm:openapi-typescript@7.13.0:2e265b37cc76d33e",
+        "license": "MIT",
+        "name": "openapi-typescript",
+        "requested": "^7.13.0",
+        "scope": "development",
+        "version": "7.13.0"
+      },
+      {
+        "bom_ref": "npm:typescript@5.9.3:ab4a5bf0e7e19f50",
+        "license": "Apache-2.0",
+        "name": "typescript",
+        "requested": "5.9.3",
+        "scope": "development",
+        "version": "5.9.3"
+      },
+      {
+        "bom_ref": "npm:vitest@4.1.11:ea239ee496678076",
+        "license": "MIT",
+        "name": "vitest",
+        "requested": "^4.1.11",
+        "scope": "development",
+        "version": "4.1.11"
+      }
+    ],
+    "python": [
+      {
+        "extras": [],
+        "license": "MIT",
+        "license_evidence": "PyPI distribution metadata: License-Expression MIT",
+        "name": "alembic",
+        "purpose": "Database schema migrations",
+        "scope": "runtime",
+        "source_url": "https://github.com/sqlalchemy/alembic",
+        "version": "1.16.5"
+      },
+      {
+        "extras": [],
+        "license": "MIT",
+        "license_evidence": "PyPI distribution classifier: License :: OSI Approved :: MIT License",
+        "name": "fastapi",
+        "purpose": "HTTP API framework",
+        "scope": "runtime",
+        "source_url": "https://github.com/fastapi/fastapi",
+        "version": "0.116.1"
+      },
+      {
+        "extras": [],
+        "license": "BSD-3-Clause",
+        "license_evidence": "PyPI distribution metadata: License BSD-3-Clause",
+        "name": "httpx",
+        "purpose": "API integration test client",
+        "scope": "development",
+        "source_url": "https://github.com/encode/httpx",
+        "version": "0.28.1"
+      },
+      {
+        "extras": [],
+        "license": "MIT",
+        "license_evidence": "PyPI distribution metadata: License MIT",
+        "name": "openpyxl",
+        "purpose": "XLSX template and import processing",
+        "scope": "runtime",
+        "source_url": "https://foss.heptapod.net/openpyxl/openpyxl",
+        "version": "3.1.5"
+      },
+      {
+        "extras": [],
+        "license": "MIT",
+        "license_evidence": "PyPI distribution metadata: License-Expression MIT",
+        "name": "pydantic",
+        "purpose": "API and domain validation",
+        "scope": "runtime",
+        "source_url": "https://github.com/pydantic/pydantic",
+        "version": "2.13.4"
+      },
+      {
+        "extras": [],
+        "license": "MIT",
+        "license_evidence": "PyPI distribution metadata: License-Expression MIT",
+        "name": "pydantic-settings",
+        "purpose": "Typed local configuration",
+        "scope": "runtime",
+        "source_url": "https://github.com/pydantic/pydantic-settings",
+        "version": "2.10.1"
+      },
+      {
+        "extras": [],
+        "license": "MIT",
+        "license_evidence": "PyPI distribution metadata: License MIT",
+        "name": "pytest",
+        "purpose": "Backend automated tests",
+        "scope": "development",
+        "source_url": "https://github.com/pytest-dev/pytest",
+        "version": "8.4.1"
+      },
+      {
+        "extras": [],
+        "license": "Apache-2.0",
+        "license_evidence": "PyPI distribution metadata: License-Expression Apache-2.0",
+        "name": "python-multipart",
+        "purpose": "Bounded multipart upload parsing",
+        "scope": "runtime",
+        "source_url": "https://github.com/Kludex/python-multipart",
+        "version": "0.0.20"
+      },
+      {
+        "extras": [],
+        "license": "MIT",
+        "license_evidence": "PyPI distribution metadata: License MIT",
+        "name": "sqlalchemy",
+        "purpose": "Relational persistence layer",
+        "scope": "runtime",
+        "source_url": "https://github.com/sqlalchemy/sqlalchemy",
+        "version": "2.0.43"
+      },
+      {
+        "extras": [
+          "standard"
+        ],
+        "license": "BSD-3-Clause",
+        "license_evidence": "PyPI distribution metadata: License-Expression BSD-3-Clause",
+        "name": "uvicorn",
+        "purpose": "Local ASGI server",
+        "scope": "runtime",
+        "source_url": "https://github.com/encode/uvicorn",
+        "version": "0.35.0"
+      }
+    ]
+  },
+  "findings": [],
+  "generator": "scripts/generate-supply-chain.py",
+  "input_files": {
+    "aggregate": "d204d6b05b6e6e72c8c080d6ea878b3a147023bee57640d2a8eadca6148399af",
+    "kongpu-demo/package-lock.json": "7892423705e1c24e31fcd3c6c24b10ca7d21558f71a06bd03b6315a7a0b6c256",
+    "requirements-lock-win-py312.json": "5a6307ba919f66923a89910093924eebedbb476bd6cfdaf059d7c73dfef7d059",
+    "requirements.txt": "99335819a6d89518a817349e300222c24c149e1f8df73472a6a8f2958eb2752d"
+  },
+  "license_counts": {
+    "(MIT OR CC0-1.0)": 1,
+    "Apache-2.0": 10,
+    "Apache-2.0 OR BSD-2-Clause": 1,
+    "BSD-2-Clause": 3,
+    "BSD-3-Clause": 12,
+    "BlueOak-1.0.0": 3,
+    "CC-BY-4.0": 1,
+    "CC0-1.0": 1,
+    "ISC": 9,
+    "MIT": 229,
+    "MIT AND PSF-2.0": 1,
+    "MIT-0": 2,
+    "MPL-2.0": 1,
+    "PSF-2.0": 1,
+    "Python-2.0": 1
+  },
+  "schema_version": 1,
+  "status": "passed",
+  "summary": {
+    "npm_direct": 17,
+    "npm_locked_entries": 241,
+    "python_direct": 10,
+    "python_locked_packages": 35,
+    "unresolved_dependency_edges": 0,
+    "unresolved_licenses": 0
+  },
+  "unresolved_dependency_edges": [],
+  "unresolved_licenses": [],
+  "validation_level": "automatic"
+}

@@ -13,5 +13,9 @@
 - [Open Source Audit](OPEN_SOURCE_AUDIT.md)：官方资料、开源许可证、维护状态和复用边界。
 - [Electrical Validation Package](ELECTRICAL_VALIDATION_PACKAGE.md)：集中 1–2 天完成的黄金项目、厂商工具与硬件验证。
 - [Adapter Security and Dependencies](ADAPTER_SECURITY_AND_DEPENDENCIES.md)：Adapter v1 权限、路径、进程、证据、SBOM 和未验证边界。
+- [CycloneDX SBOM](supply-chain/sbom.cdx.json)：由固定依赖清单离线生成的机器可读供应链清单。
+- [Dependency Audit](supply-chain/dependency-audit.json)：输入哈希、Python/npm 完整锁定覆盖范围和依赖门禁。
+- [Third-party Licenses](supply-chain/THIRD_PARTY_LICENSES.md)：Python 传递锁与 npm 锁定安装项的许可证清单。
+- [Python 3.12 Windows lock](../requirements-lock-win-py312.json)：目标开发环境的发行文件哈希和依赖图锁。
 
 历史调研与技术证据保存在 [plc-ai-agent-research](../plc-ai-agent-research/README.md)。

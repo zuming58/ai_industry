@@ -1,0 +1,495 @@
+{
+  "environment": {
+    "implementation": "CPython",
+    "platform_machine": "AMD64",
+    "python_version": "3.12",
+    "sys_platform": "win32"
+  },
+  "packages": [
+    {
+      "dependencies": [
+        "mako",
+        "sqlalchemy",
+        "typing-extensions"
+      ],
+      "direct": true,
+      "distribution_sha256": "e845dfe090c5ffa7b92593ae6687c5cb1a101e91fa53868497dbd79847f9dbe3",
+      "distribution_url": "https://files.pythonhosted.org/packages/39/4a/4c61d4c84cfd9befb6fa08a702535b27b21fff08c946bc2f6139decbf7f7/alembic-1.16.5-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "alembic",
+      "scope": "runtime",
+      "source_url": "https://github.com/sqlalchemy/alembic/",
+      "version": "1.16.5"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0",
+      "distribution_url": "https://files.pythonhosted.org/packages/99/91/8acff4f5e50511b911bbccb72b8628a49c68ce14148cd9f6431094859a90/annotated_types-0.8.0-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "annotated-types",
+      "scope": "runtime",
+      "source_url": "https://github.com/annotated-types/annotated-types",
+      "version": "0.8.0"
+    },
+    {
+      "dependencies": [
+        "idna",
+        "typing-extensions"
+      ],
+      "direct": false,
+      "distribution_sha256": "9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494",
+      "distribution_url": "https://files.pythonhosted.org/packages/da/35/f2287558c17e29fafc8ef3daf819bb9834061cfa43bff8014f7df7f63bdc/anyio-4.14.2-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "anyio",
+      "scope": "runtime",
+      "source_url": "https://github.com/agronholm/anyio",
+      "version": "4.14.2"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+      "distribution_url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+      "license": "MPL-2.0",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "certifi",
+      "scope": "development",
+      "source_url": "https://github.com/certifi/python-certifi",
+      "version": "2026.7.22"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360",
+      "distribution_url": "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "click",
+      "scope": "runtime",
+      "source_url": "https://github.com/pallets/click/",
+      "version": "8.5.0"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+      "distribution_url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "reviewed upstream LICENSE.txt at https://github.com/tartley/colorama",
+      "name": "colorama",
+      "scope": "runtime",
+      "source_url": "https://github.com/tartley/colorama",
+      "version": "0.4.6"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa",
+      "distribution_url": "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "et-xmlfile",
+      "scope": "runtime",
+      "source_url": "https://foss.heptapod.net/openpyxl/et_xmlfile",
+      "version": "2.0.0"
+    },
+    {
+      "dependencies": [
+        "pydantic",
+        "starlette",
+        "typing-extensions"
+      ],
+      "direct": true,
+      "distribution_sha256": "c46ac7c312df840f0c9e220f7964bada936781bc4e2e6eb71f1c4d7553786565",
+      "distribution_url": "https://files.pythonhosted.org/packages/e5/47/d63c60f59a59467fda0f93f46335c9d18526d7071f025cb5b89d5353ea42/fastapi-0.116.1-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata license classifier",
+      "name": "fastapi",
+      "scope": "runtime",
+      "source_url": "https://github.com/fastapi/fastapi",
+      "version": "0.116.1"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "49ddacd36af37735fab103846f4ee4d18a492dde72730d1699c0c8ebe30d9f18",
+      "distribution_url": "https://files.pythonhosted.org/packages/de/30/1f42b88dc587b5899ee50616ad56ee40cafaf225df4fb829f10183c62a5c/greenlet-3.5.5-cp312-cp312-win_amd64.whl",
+      "license": "MIT AND PSF-2.0",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "greenlet",
+      "scope": "runtime",
+      "source_url": "https://github.com/python-greenlet/greenlet",
+      "version": "3.5.5"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+      "distribution_url": "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "h11",
+      "scope": "runtime",
+      "source_url": "",
+      "version": "0.16.0"
+    },
+    {
+      "dependencies": [
+        "certifi",
+        "h11"
+      ],
+      "direct": false,
+      "distribution_sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55",
+      "distribution_url": "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "httpcore",
+      "scope": "development",
+      "source_url": "https://github.com/encode/httpcore",
+      "version": "1.0.9"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "cd96f29b4bab1d42fa6e3d008711c75e0f79e94e06827330160e3a304227f150",
+      "distribution_url": "https://files.pythonhosted.org/packages/05/0b/4240efeb672751ee5b9b380cb0e3fdc050bc05f68adc7a8aefc4fcd9a69a/httptools-0.8.0-cp312-cp312-win_amd64.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "httptools",
+      "scope": "runtime",
+      "source_url": "https://github.com/MagicStack/httptools",
+      "version": "0.8.0"
+    },
+    {
+      "dependencies": [
+        "anyio",
+        "certifi",
+        "httpcore",
+        "idna"
+      ],
+      "direct": true,
+      "distribution_sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad",
+      "distribution_url": "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "httpx",
+      "scope": "development",
+      "source_url": "https://github.com/encode/httpx",
+      "version": "0.28.1"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4",
+      "distribution_url": "https://files.pythonhosted.org/packages/57/b0/0e52c878c53f245edd3a11020f20979b3f490f245af532c7cae3027754b5/idna-3.19-py3-none-any.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "idna",
+      "scope": "runtime",
+      "source_url": "https://github.com/kjd/idna",
+      "version": "3.19"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12",
+      "distribution_url": "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "iniconfig",
+      "scope": "development",
+      "source_url": "https://github.com/pytest-dev/iniconfig",
+      "version": "2.3.0"
+    },
+    {
+      "dependencies": [
+        "markupsafe"
+      ],
+      "direct": false,
+      "distribution_sha256": "a359d9a94a541213958742b2698d0a7757bb83551767bc468a74b9905aba9617",
+      "distribution_url": "https://files.pythonhosted.org/packages/a5/54/12ed58d458474aaab5c3d180173e745a4fe131bb330370596876d19ff60f/mako-1.4.1-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "mako",
+      "scope": "runtime",
+      "source_url": "https://www.makotemplates.org/",
+      "version": "1.4.1"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "26a5784ded40c9e318cfc2bdb30fe164bdb8665ded9cd64d500a34fb42067b1c",
+      "distribution_url": "https://files.pythonhosted.org/packages/aa/5b/bec5aa9bbbb2c946ca2733ef9c4ca91c91b6a24580193e891b5f7dbe8e1e/markupsafe-3.0.3-cp312-cp312-win_amd64.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "markupsafe",
+      "scope": "runtime",
+      "source_url": "https://github.com/pallets/markupsafe/",
+      "version": "3.0.3"
+    },
+    {
+      "dependencies": [
+        "et-xmlfile"
+      ],
+      "direct": true,
+      "distribution_sha256": "5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2",
+      "distribution_url": "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "openpyxl",
+      "scope": "runtime",
+      "source_url": "https://foss.heptapod.net/openpyxl/openpyxl",
+      "version": "3.1.5"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+      "distribution_url": "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl",
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "packaging",
+      "scope": "development",
+      "source_url": "https://github.com/pypa/packaging",
+      "version": "26.3"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746",
+      "distribution_url": "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "pluggy",
+      "scope": "development",
+      "source_url": "",
+      "version": "1.6.0"
+    },
+    {
+      "dependencies": [
+        "annotated-types",
+        "pydantic-core",
+        "typing-extensions",
+        "typing-inspection"
+      ],
+      "direct": true,
+      "distribution_sha256": "45a282cde31d808236fd7ea9d919b128653c8b38b393d1c4ab335c62924d9aba",
+      "distribution_url": "https://files.pythonhosted.org/packages/fd/7b/122376b1fd3c62c1ed9dc80c931ace4844b3c55407b6fb2d199377c9736f/pydantic-2.13.4-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "pydantic",
+      "scope": "runtime",
+      "source_url": "https://github.com/pydantic/pydantic",
+      "version": "2.13.4"
+    },
+    {
+      "dependencies": [
+        "typing-extensions"
+      ],
+      "direct": false,
+      "distribution_sha256": "e9c26f834c65f5752f3f06cb08cb86a913ceb7274d0db6e267808a708b46bc89",
+      "distribution_url": "https://files.pythonhosted.org/packages/40/8c/985c1d41ea1107c2534abd9870e4ed5c8e7669b5c308297835c001e7a1c4/pydantic_core-2.46.4-cp312-cp312-win_amd64.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "pydantic-core",
+      "scope": "runtime",
+      "source_url": "https://github.com/pydantic/pydantic/tree/main/pydantic-core",
+      "version": "2.46.4"
+    },
+    {
+      "dependencies": [
+        "pydantic",
+        "python-dotenv",
+        "typing-inspection"
+      ],
+      "direct": true,
+      "distribution_sha256": "a60952460b99cf661dc25c29c0ef171721f98bfcb52ef8d9ea4c943d7c8cc796",
+      "distribution_url": "https://files.pythonhosted.org/packages/58/f0/427018098906416f580e3cf1366d3b1abfb408a0652e9f31600c24a1903c/pydantic_settings-2.10.1-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "pydantic-settings",
+      "scope": "runtime",
+      "source_url": "https://github.com/pydantic/pydantic-settings",
+      "version": "2.10.1"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9",
+      "distribution_url": "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl",
+      "license": "BSD-2-Clause",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "pygments",
+      "scope": "development",
+      "source_url": "https://github.com/pygments/pygments",
+      "version": "2.21.0"
+    },
+    {
+      "dependencies": [
+        "colorama",
+        "iniconfig",
+        "packaging",
+        "pluggy",
+        "pygments"
+      ],
+      "direct": true,
+      "distribution_sha256": "539c70ba6fcead8e78eebbf1115e8b589e7565830d7d006a8723f19ac8a0afb7",
+      "distribution_url": "https://files.pythonhosted.org/packages/29/16/c8a903f4c4dffe7a12843191437d7cd8e32751d5de349d45d3fe69544e87/pytest-8.4.1-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "pytest",
+      "scope": "development",
+      "source_url": "https://github.com/pytest-dev/pytest",
+      "version": "8.4.1"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "904552145e8bfed22162c09dab1c2b9b54fefa7b23ba780f4f26ca0316b0f0d9",
+      "distribution_url": "https://files.pythonhosted.org/packages/0d/17/c5c6b53ddc18f297992099b3d9ec16c855c0ccc83263a21fe4d1c625ec6c/python_dotenv-1.2.3-py3-none-any.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "python-dotenv",
+      "scope": "runtime",
+      "source_url": "https://github.com/theskumar/python-dotenv",
+      "version": "1.2.3"
+    },
+    {
+      "dependencies": [],
+      "direct": true,
+      "distribution_sha256": "8a62d3a8335e06589fe01f2a3e178cdcc632f3fbe0d492ad9ee0ec35aab1f104",
+      "distribution_url": "https://files.pythonhosted.org/packages/45/58/38b5afbc1a800eeea951b9285d3912613f2603bdf897a4ab0f4bd7f405fc/python_multipart-0.0.20-py3-none-any.whl",
+      "license": "Apache-2.0",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "python-multipart",
+      "scope": "runtime",
+      "source_url": "https://github.com/Kludex/python-multipart",
+      "version": "0.0.20"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b",
+      "distribution_url": "https://files.pythonhosted.org/packages/86/bf/899e81e4cce32febab4fb42bb97dcdf66bc135272882d1987881a4b519e9/pyyaml-6.0.3-cp312-cp312-win_amd64.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "pyyaml",
+      "scope": "runtime",
+      "source_url": "https://github.com/yaml/pyyaml",
+      "version": "6.0.3"
+    },
+    {
+      "dependencies": [
+        "greenlet",
+        "typing-extensions"
+      ],
+      "direct": true,
+      "distribution_sha256": "1c6d85327ca688dbae7e2b06d7d84cfe4f3fffa5b5f9e21bb6ce9d0e1a0e0e0a",
+      "distribution_url": "https://files.pythonhosted.org/packages/bc/09/405c915a974814b90aa591280623adc6ad6b322f61fd5cff80aeaef216c9/sqlalchemy-2.0.43-cp312-cp312-win_amd64.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "sqlalchemy",
+      "scope": "runtime",
+      "source_url": "https://docs.sqlalchemy.org",
+      "version": "2.0.43"
+    },
+    {
+      "dependencies": [
+        "anyio",
+        "typing-extensions"
+      ],
+      "direct": false,
+      "distribution_sha256": "89c0778ca62a76b826101e7c709e70680a1699ca7da6b44d38eb0a7e61fe4b51",
+      "distribution_url": "https://files.pythonhosted.org/packages/ce/fd/901cfa59aaa5b30a99e16876f11abe38b59a1a2c51ffb3d7142bb6089069/starlette-0.47.3-py3-none-any.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "starlette",
+      "scope": "runtime",
+      "source_url": "https://github.com/encode/starlette",
+      "version": "0.47.3"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "distribution_url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+      "license": "PSF-2.0",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "typing-extensions",
+      "scope": "runtime",
+      "source_url": "https://github.com/python/typing_extensions",
+      "version": "4.16.0"
+    },
+    {
+      "dependencies": [
+        "typing-extensions"
+      ],
+      "direct": false,
+      "distribution_sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147",
+      "distribution_url": "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "typing-inspection",
+      "scope": "runtime",
+      "source_url": "https://github.com/pydantic/typing-inspection",
+      "version": "0.4.4"
+    },
+    {
+      "dependencies": [
+        "click",
+        "colorama",
+        "h11",
+        "httptools",
+        "python-dotenv",
+        "pyyaml",
+        "watchfiles",
+        "websockets"
+      ],
+      "direct": true,
+      "distribution_sha256": "197535216b25ff9b785e29a0b79199f55222193d47f820816e7da751e9bc8d4a",
+      "distribution_url": "https://files.pythonhosted.org/packages/d2/e2/dc81b1bd1dcfe91735810265e9d26bc8ec5da45b4c0f6237e286819194c3/uvicorn-0.35.0-py3-none-any.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "uvicorn",
+      "scope": "runtime",
+      "source_url": "https://github.com/encode/uvicorn",
+      "version": "0.35.0"
+    },
+    {
+      "dependencies": [
+        "anyio"
+      ],
+      "direct": false,
+      "distribution_sha256": "f155b3a1b2a5fc89cdc70d47ee5d54e3b75e88efa34982028a35daef9ba00379",
+      "distribution_url": "https://files.pythonhosted.org/packages/1c/e6/9d42569c0102645cc8cea5d8c7d8a1e9d4ada2cb7f05f75e554b8aa2202a/watchfiles-1.2.0-cp312-cp312-win_amd64.whl",
+      "license": "MIT",
+      "license_evidence": "PyPI distribution metadata License",
+      "name": "watchfiles",
+      "scope": "runtime",
+      "source_url": "https://github.com/samuelcolvin/watchfiles",
+      "version": "1.2.0"
+    },
+    {
+      "dependencies": [],
+      "direct": false,
+      "distribution_sha256": "617243e19a0992095956f406ee9cd3bc4ba92862d83cb1d83bb59ce574412bec",
+      "distribution_url": "https://files.pythonhosted.org/packages/50/23/493ecfdaf32898e5ea24dc900e33e5e317f9662d5d9ab2d44b2e111b4e1c/websockets-17.1-cp312-cp312-win_amd64.whl",
+      "license": "BSD-3-Clause",
+      "license_evidence": "PyPI distribution metadata License-Expression",
+      "name": "websockets",
+      "scope": "runtime",
+      "source_url": "https://github.com/python-websockets/websockets",
+      "version": "17.1"
+    }
+  ],
+  "requirements_sha256": "99335819a6d89518a817349e300222c24c149e1f8df73472a6a8f2958eb2752d",
+  "resolver": {
+    "name": "pip",
+    "version": "25.0.1"
+  },
+  "schema_version": 1
+}

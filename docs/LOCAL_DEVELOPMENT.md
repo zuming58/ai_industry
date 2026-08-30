@@ -40,6 +40,19 @@
 
 ## 质量门禁
 
+先验证由依赖清单生成的供应链产物没有过期：
+
+    py -3.12 scripts/generate-supply-chain.py --check
+
+依赖发生变化时，先用目标 CPython 3.12/Windows 环境解析并更新锁文件，再重新生成和审阅差异：
+
+    py -3.12 -m pip install --dry-run --ignore-installed --only-binary=:all: --report .local-data/supply-chain-pip-report.json -r requirements.txt
+    py -3.12 scripts/generate-supply-chain.py --pip-report .local-data/supply-chain-pip-report.json
+
+    py -3.12 scripts/generate-supply-chain.py
+
+然后运行代码、构建和浏览器门禁：
+
     py -3.12 -m pytest
     Set-Location kongpu-demo
     npm run typecheck
@@ -51,6 +64,8 @@
     git diff --check
 
 Playwright 启动独立的 8010 API、5174 Web 和临时 SQLite 数据目录，不修改正式 .local-data。
+
+供应链生成器仅读取 requirements.txt、requirements-lock-win-py312.json 和 kongpu-demo/package-lock.json，不访问网络、.private/ 或 .local-data/；`--pip-report` 仅用于将用户已运行的 pip 解析报告规范化为锁文件。它生成 CycloneDX SBOM、依赖审计 JSON、第三方许可证清单和带哈希的 Python 安装锁；任何未固定/未评审的 Python 直接依赖、锁文件过期、发行哈希或许可证缺失、npm 许可证缺失或无法解析的依赖边都会使门禁失败。
 
 ## 备份与恢复
 

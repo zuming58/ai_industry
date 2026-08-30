@@ -34,7 +34,9 @@ M3 前置阶段只完成本机只读环境快照、确定性审计、受限参�
 - 外部日志、截图、报告以 SHA-256 内容寻址保存，原件不可覆盖；导入后验证等级为 manual_unverified，必须在集中验证包中由人工签名升级。
 - 日志展示前应脱敏路径中的用户名、令牌、密码、IP 和序列号；原始证据只放 .private/validation/，不进 GitHub。
 - 每个 Adapter 固定 adapter_id、契约版本和能力矩阵；环境快照记录平台、工具版本、目标型号、Adapter 版本、Commit、MachineSpec/Control IR/TestSpec 哈希和时间。
-- 当前运行依赖见根目录 requirements.txt 与 kongpu-demo/package.json；M3 未增加新的第三方运行时依赖。后续发布前生成 SBOM、许可证清单和锁文件审计报告。
+- 当前运行依赖见根目录 requirements.txt 与 kongpu-demo/package-lock.json；M3 未增加厂商运行时依赖。docs/supply-chain/ 已包含确定性 CycloneDX 1.5 SBOM、依赖审计 JSON 和第三方许可证清单。
+- scripts/generate-supply-chain.py --check 是推送门禁：输入 SHA-256、Python 直接依赖评审策略、npm 全锁文件安装项、许可证、integrity、resolved 和依赖边均被自动核对。生成器不访问网络、.private/ 或 .local-data/，输出不含本机绝对路径和用户名。
+- 当前 npm 由 package-lock v3 覆盖完整安装项；Python 由 requirements-lock-win-py312.json 固定 CPython 3.12/Windows AMD64 的完整 pip 解析闭包，并为每个选定发行文件记录 SHA-256。requirements.txt 仍是跨环境的直接依赖入口，安装到其他平台或 Python 版本前必须重新解析并生成对应锁文件。
 
 ## 安全测试门
 

@@ -1,6 +1,6 @@
 # 开源与外部资料审计
 
-核对日期：2026-08-29
+核对日期：2026-08-30
 
 ## 使用原则
 
@@ -29,11 +29,19 @@
 
 ## 当前实现的来源边界
 
-M1/M2 的解析器、规则、版本模型、Control IR 和 FX5U ST 骨架均为本仓库自主实现，没有复制上述 GPL/LGPL 项目代码。当前运行依赖的 Python/npm 包由清单管理；进入可发布安装包前仍需生成完整第三方许可证清单。
+M1/M2 的解析器、规则、版本模型、Control IR 和 FX5U ST 骨架均为本仓库自主实现，没有复制上述 GPL/LGPL 项目代码。当前运行依赖的 Python/npm 包由清单管理。可复现供应链产物已生成：
+
+- supply-chain/sbom.cdx.json：CycloneDX 1.5 JSON，覆盖 requirements-lock-win-py312.json 的 35 个 Python 锁定包与 package-lock v3 的全部 241 个 npm 安装项；
+- supply-chain/dependency-audit.json：记录 requirements.txt、Python 传递锁和 package-lock.json 的 SHA-256、直接依赖、许可证汇总、两套依赖图和未决项；
+- supply-chain/THIRD_PARTY_LICENSES.md：列出 Python/npm 依赖版本、作用域、许可证表达式、发行文件哈希、安装路径和许可证依据。
+
+scripts/generate-supply-chain.py 只读取仓库清单和已审阅的 Python 锁文件并按稳定排序输出，不访问网络和本机私有目录。自动测试确认重复生成字节一致、所有直接依赖与 Python 传递闭包均被列出、npm/Python 没有空版本/空许可证/未解析依赖边、输入哈希变化会改变报告，并阻止绝对路径或用户名进入产物。FastAPI 0.116.1 的 License 字段为空，许可证依据明确取自该版本 PyPI 分发元数据中的 OSI Approved MIT classifier，未凭空补写。
+
+当前 Python 由 requirements.txt（跨环境直接入口）和 requirements-lock-win-py312.json/requirements-lock-win-py312.txt（CPython 3.12、Windows AMD64 的 35 包哈希锁）共同描述。锁文件由 `py -3.12 scripts/generate-supply-chain.py --pip-report <pip-report.json>` 从 pip 离线解析报告规范化生成；更换目标平台、Python 版本或入口依赖时必须重新生成，不得复用这份平台锁。
 
 M3 前置的 Adapter 注册表、Manual/Reference Adapter 契约、生成物 Audit v1 和受限 TestSpec 参考模拟器同样为本仓库自主实现。参考模拟只使用 Python 标准库 ast 对白名单节点做解释，不加载或执行外部 ST/Python 代码；没有复制 Beremiz、MatIEC、OpenPLC 或其他 GPL/LGPL 实现。
 
-当前没有新增运行时厂商依赖。GX Works3、GX Simulator3、MX Component、AutoShop 和 CODESYS 只作为未来人工验证目标，不被本机代码自动下载、启动或控制。任何未来引入的 Adapter 或开源库必须固定 Commit、保留 LICENSE/NOTICE、生成 SBOM，并通过权限、网络、文件写入、超时和回滚审计。
+当前没有新增运行时厂商依赖。GX Works3、GX Simulator3、MX Component、AutoShop 和 CODESYS 只作为未来人工验证目标，不被本机代码自动下载、启动或控制。任何未来引入的 Adapter 或开源库必须固定 Commit、保留 LICENSE/NOTICE、重新生成并审阅 SBOM/许可证清单，并通过权限、网络、文件写入、超时和回滚审计。
 
 ## 后续自主审计步骤
 
