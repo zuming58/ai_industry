@@ -89,7 +89,7 @@ ProjectAcceptanceRun 绑定 GenerationRun、当前 ProgramCommit、AutomatedRevi
 
 CommissioningTask 只能由不可变 MonitoringEvidence 创建。系统从候选 ProgramCommit 派生 engineer/commissioning-* 分支，并复制 Control IR、TestSpec、ProgramArtifact 和 TraceLink 基线到新的 GenerationRun；后续修改形成新 Commit 和自动审核，不覆盖候选或来源历史。
 
-Commit 比较只能在同一 ProgramWorkspace 中执行，使用两个明确 Git SHA 直接读取仓库对象，不依赖当前工作树。恢复接口从历史 Commit 创建 restore/* 独立分支、新 GenerationRun 和分支内 ProgramCommit；来源分支 head 不移动，旧审计、模拟、候选和外部证据均不继承，新基线只自动生成独立 AutomatedReviewRun。
+Commit 比较只能在同一 ProgramWorkspace 中执行，使用两个明确 Git SHA 直接读取仓库对象，不依赖当前工作树。响应遵循 `kongpu-version-comparison/v1`，除兼容保留的 unified `diff` 外，按源码、MachineSpec、I/O 映射、组件/工程参数、Control IR、TestSpec、生成配置、自动验证摘要和厂商配置摘要返回 added/removed/changed 对象、字段 before/after、Excel 来源和稳定 `comparison_hash`。厂商配置节固定标记 `unverified`，不代表 GX Works3 或硬件验证。恢复接口从历史 Commit 创建 restore/* 独立分支、新 GenerationRun 和分支内 ProgramCommit；来源分支 head 不移动，旧审计、模拟、候选和外部证据均不继承，新基线只自动生成独立 AutomatedReviewRun。
 
 ## MachineSpec v1
 

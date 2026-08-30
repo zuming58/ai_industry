@@ -173,6 +173,15 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await page.getByLabel("基线 Commit").selectOption(baseCommitValue!);
   await page.getByLabel("目标 Commit").selectOption(targetCommitValue!);
   await expect(page.locator(".diff-panel")).toContainText("E2E reviewed change");
+  await expect(page.locator(".comparison-summary")).toContainText("变化工件");
+  await expect(page.locator(".comparison-tabs")).toContainText("程序源码");
+  await expect(page.locator(".comparison-tabs")).toContainText("MachineSpec");
+  await expect(page.locator(".comparison-tabs")).toContainText("I/O 映射");
+  await expect(page.locator(".comparison-tabs")).toContainText("未验证");
+  await page.getByRole("tab", { name: /MachineSpec/ }).click();
+  await expect(page.locator(".comparison-empty")).toContainText("该工件无变化");
+  await page.getByRole("tab", { name: /程序源码/ }).click();
+  await expect(page.locator(".source-diff")).toContainText("E2E reviewed change");
   await page.getByLabel("恢复分支名").fill("restore/e2e-initial-baseline");
   await page.getByRole("button", { name: "从基线创建恢复分支" }).click();
   await expect(page.getByText(/已创建恢复分支 restore\/e2e-initial-baseline/)).toBeVisible();

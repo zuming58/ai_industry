@@ -12,7 +12,7 @@ import type {
   AdapterDescriptor, AdapterEnvironment, AutomatedReviewRun, CompileRun, GenerationRun,
   MachineSpec, MonitoringEvidence, ProgramBranch, ProgramCommit, ProgramFile,
   Project, ProjectAcceptanceRun, ReleaseCandidate, CandidateVerification,
-  SimulationRun, SpecRevision, ValidationIssue,
+  SimulationRun, SpecRevision, ValidationIssue, VersionComparisonSection,
 } from "./domain";
 
 const BRAND_ICON = "/assets/brand/kongpu-app-icon.png";
@@ -228,6 +228,29 @@ function ProgramPage() {
   </ProjectPage>;
 }
 
+function comparisonValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function comparisonSource(source?: { sheet?: string | null; row?: number | null; column?: string | null } | null) {
+  if (!source?.sheet) return "无 Excel 定位";
+  return `${source.sheet}${source.row ? ` 第 ${source.row} 行` : ""}${source.column ? ` · ${source.column}` : ""}`;
+}
+
+function VersionSectionDetail({ section, sourceDiff, sameCommit }: { section: VersionComparisonSection; sourceDiff: string; sameCommit: boolean }) {
+  if (section.id === "source") {
+    return <pre className="source-diff">{sourceDiff || (sameCommit ? "两个选择指向同一 Commit。" : "两个 Commit 的文本源码没有差异。")}</pre>;
+  }
+  return <div className="structured-diff">
+    {section.note && <div className="comparison-note"><WarningCircle size={17} /><span>{section.note}</span></div>}
+    {section.items.length === 0 ? <div className="comparison-empty"><CheckCircle size={20} /><span><strong>该工件无变化</strong>两个明确 Commit 的结构化内容一致。</span></div> : section.items.map((item) => <article className={`comparison-item comparison-item--${item.change}`} key={`${item.entity_type}:${item.entity_id}`}>
+      <div className="comparison-item__head"><Status value={item.change} /><span><strong>{item.entity_id}</strong><small>{item.entity_type}</small></span><em>{comparisonSource(item.source_after || item.source_before)}</em></div>
+      <div className="comparison-fields">{item.fields.map((field) => <div key={field.field}><code>{field.field}</code><span className="comparison-before">{comparisonValue(field.before)}</span><ArrowRight size={13} /><span className="comparison-after">{comparisonValue(field.after)}</span></div>)}</div>
+    </article>)}
+  </div>;
+}
+
 function VersionPage() {
   const queryClient = useQueryClient();
   const { projectId } = useProjectContext();
@@ -236,6 +259,7 @@ function VersionPage() {
   const [baseId, setBaseId] = useState("");
   const [targetId, setTargetId] = useState("");
   const [restoreName, setRestoreName] = useState("");
+  const [sectionId, setSectionId] = useState("source");
   const [busy, setBusy] = useState(false);
   const commitItems = commits.data || [];
   const resolvedBaseId = baseId || commitItems[1]?.id || commitItems[0]?.id || "";
@@ -263,7 +287,9 @@ function VersionPage() {
     }
   };
   const comparisonTitle = comparison.data ? comparison.data.base.git_sha.slice(0, 12) + " → " + comparison.data.target.git_sha.slice(0, 12) : "选择两个 Commit";
-  return <ProjectPage kicker="P11 · VERSION" title="版本中心" description="比较任意两个真实 Commit，并从历史基线创建独立恢复分支；旧历史和验证结论不可改写。"><div className="version-layout"><section className="panel"><div className="panel__header"><div><h3>程序分支</h3><p>{branches.data?.length || 0} 条</p></div></div>{branches.data?.map((branch: ProgramBranch) => <div className="branch-row" key={branch.id}><GitBranch size={16} /><span><strong>{branch.name}</strong><small>{branch.head_commit?.slice(0, 12) || "尚无提交"}</small></span><Status value={branch.status} /></div>)}</section><section className="panel"><div className="panel__header"><div><h3>Commit 历史</h3><p>不可变本地 Git 记录</p></div></div>{commitItems.map((commit: ProgramCommit) => <button className={"commit-row " + (resolvedBaseId === commit.id || resolvedTargetId === commit.id ? "is-selected" : "")} key={commit.id} onClick={() => setTargetId(commit.id)}><Code size={16} /><span><strong>{commit.message}</strong><small>{commit.git_sha.slice(0, 12)} · {formatTime(commit.created_at)}</small></span><ArrowRight size={15} /></button>)}</section><section className="code-panel diff-panel"><div className="version-compare-toolbar"><label>基线 Commit<select aria-label="基线 Commit" value={resolvedBaseId} onChange={(event) => setBaseId(event.target.value)}>{commitItems.map((commit) => <option key={commit.id} value={commit.id}>{commit.message} · {commit.git_sha.slice(0, 8)}</option>)}</select></label><label>目标 Commit<select aria-label="目标 Commit" value={resolvedTargetId} onChange={(event) => setTargetId(event.target.value)}>{commitItems.map((commit) => <option key={commit.id} value={commit.id}>{commit.message} · {commit.git_sha.slice(0, 8)}</option>)}</select></label><label>恢复分支名（可选）<input aria-label="恢复分支名" value={restoreName} onChange={(event) => setRestoreName(event.target.value)} placeholder="restore/历史基线" /></label><button className="button button--outline" disabled={busy || !baseCommit || !sourceBranch} onClick={restore}><GitBranch size={15} />{busy ? "创建中…" : "从基线创建恢复分支"}</button></div><div className="version-boundary"><Info size={17} /><span>恢复只复制历史源码基线并重新运行自动审核，不继承旧静态审计、参考模拟、候选包或厂商验证。</span></div><div className="code-panel__header"><span>{comparisonTitle}</span></div><pre>{comparison.isLoading ? "正在比较不可变 Commit…" : comparison.isError ? errorMessage(comparison.error) : comparison.data?.diff || (comparison.data?.same_commit ? "两个选择指向同一 Commit。" : "两个 Commit 没有文本差异。")}</pre></section></div></ProjectPage>;
+  const sections = comparison.data?.sections || [];
+  const activeSection = sections.find((item) => item.id === sectionId) || sections[0];
+  return <ProjectPage kicker="P11 · VERSION" title="版本中心" description="比较两个明确 Commit 的源码、规格、I/O、Control IR、TestSpec 与验证证据；恢复不改写历史。"><div className="version-layout"><section className="panel"><div className="panel__header"><div><h3>程序分支</h3><p>{branches.data?.length || 0} 条</p></div></div>{branches.data?.map((branch: ProgramBranch) => <div className="branch-row" key={branch.id}><GitBranch size={16} /><span><strong>{branch.name}</strong><small>{branch.head_commit?.slice(0, 12) || "尚无提交"}</small></span><Status value={branch.status} /></div>)}</section><section className="panel"><div className="panel__header"><div><h3>Commit 历史</h3><p>不可变本地 Git 记录</p></div></div>{commitItems.map((commit: ProgramCommit) => <button className={"commit-row " + (resolvedBaseId === commit.id || resolvedTargetId === commit.id ? "is-selected" : "")} key={commit.id} onClick={() => setTargetId(commit.id)}><Code size={16} /><span><strong>{commit.message}</strong><small>{commit.git_sha.slice(0, 12)} · {formatTime(commit.created_at)}</small></span><ArrowRight size={15} /></button>)}</section><section className="code-panel diff-panel"><div className="version-compare-toolbar"><label>基线 Commit<select aria-label="基线 Commit" value={resolvedBaseId} onChange={(event) => setBaseId(event.target.value)}>{commitItems.map((commit) => <option key={commit.id} value={commit.id}>{commit.message} · {commit.git_sha.slice(0, 8)}</option>)}</select></label><label>目标 Commit<select aria-label="目标 Commit" value={resolvedTargetId} onChange={(event) => setTargetId(event.target.value)}>{commitItems.map((commit) => <option key={commit.id} value={commit.id}>{commit.message} · {commit.git_sha.slice(0, 8)}</option>)}</select></label><label>恢复分支名（可选）<input aria-label="恢复分支名" value={restoreName} onChange={(event) => setRestoreName(event.target.value)} placeholder="restore/历史基线" /></label><button className="button button--outline" disabled={busy || !baseCommit || !sourceBranch} onClick={restore}><GitBranch size={15} />{busy ? "创建中…" : "从基线创建恢复分支"}</button></div><div className="version-boundary"><Info size={17} /><span>恢复只复制历史源码基线并重新运行自动审核，不继承旧静态审计、参考模拟、候选包或厂商验证。</span></div><div className="comparison-summary"><span><strong>{comparison.data?.summary.changed_sections || 0}</strong> 变化工件</span><span><strong>{comparison.data?.summary.changed_items || 0}</strong> 变化对象</span><code>{comparison.data?.comparison_hash.slice(0, 16) || "正在计算"}</code></div><div className="comparison-tabs" role="tablist" aria-label="版本比较工件">{sections.map((section) => <button role="tab" aria-selected={activeSection?.id === section.id} className={activeSection?.id === section.id ? "is-active" : ""} key={section.id} onClick={() => setSectionId(section.id)}><span>{section.label}</span><small>{section.summary.added}+ / {section.summary.removed}- / {section.summary.changed}~</small>{section.verification_level === "unverified" && <em>未验证</em>}</button>)}</div><div className="code-panel__header"><span>{comparisonTitle} · {activeSection?.label || "结构化比较"}</span><Status value={activeSection?.status || "读取中"} /></div>{comparison.isLoading ? <div className="comparison-loading">正在读取两个不可变 Commit…</div> : comparison.isError ? <div className="comparison-loading comparison-loading--error">{errorMessage(comparison.error)}</div> : activeSection ? <VersionSectionDetail section={activeSection} sourceDiff={comparison.data?.source_diff || ""} sameCommit={Boolean(comparison.data?.same_commit)} /> : <div className="comparison-loading">尚无可比较 Commit。</div>}<div className="version-claim">{comparison.data?.claim_boundary || "厂商二进制工程、真实编译、真实模拟和硬件结果未验证。"}</div></section></div></ProjectPage>;
 }
 
 function CapabilityPage() {

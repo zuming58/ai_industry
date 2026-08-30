@@ -315,10 +315,47 @@ export type ProjectAcceptanceRun = {
 };
 
 export type CommitComparison = {
+  schema: "kongpu-version-comparison/v1";
   base: ProgramCommit;
   target: ProgramCommit;
   same_commit: boolean;
+  comparison_hash: string;
+  summary: { changed_sections: number; unchanged_sections: number; changed_items: number };
+  sections: VersionComparisonSection[];
+  source_diff: string;
   diff: string;
+  claim_boundary: string;
+};
+
+export type VersionComparisonSource = {
+  sheet?: string | null;
+  row?: number | null;
+  column?: string | null;
+};
+
+export type VersionFieldChange = {
+  field: string;
+  before: unknown;
+  after: unknown;
+};
+
+export type VersionComparisonItem = {
+  change: "added" | "removed" | "changed";
+  entity_type: string;
+  entity_id: string;
+  fields: VersionFieldChange[];
+  source_before?: VersionComparisonSource | null;
+  source_after?: VersionComparisonSource | null;
+};
+
+export type VersionComparisonSection = {
+  id: string;
+  label: string;
+  status: "changed" | "unchanged";
+  verification_level: string;
+  summary: { added: number; removed: number; changed: number; total: number };
+  items: VersionComparisonItem[];
+  note?: string | null;
 };
 
 export type RestoreBranchResult = {
