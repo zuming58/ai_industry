@@ -404,6 +404,80 @@ class ReleaseCandidate(Base, TimestampMixin):
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
+class ReleaseCandidateVerification(Base, TimestampMixin):
+    __tablename__ = "release_candidate_verifications"
+    __table_args__ = (
+        UniqueConstraint(
+            "release_candidate_id",
+            "input_hash",
+            name="uq_release_candidate_verification_input",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    release_candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("release_candidates.id", ondelete="CASCADE"), index=True
+    )
+    input_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    verification_level: Mapped[str] = mapped_column(
+        String(40), default="automatic_integrity"
+    )
+    checks_json: Mapped[str] = mapped_column(Text, default="[]")
+    report_artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("source_artifacts.id")
+    )
+
+
+class ProjectAcceptanceRun(Base, TimestampMixin):
+    __tablename__ = "project_acceptance_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "input_hash", name="uq_project_acceptance_input"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    generation_run_id: Mapped[str] = mapped_column(
+        ForeignKey("generation_runs.id"), index=True
+    )
+    program_commit_id: Mapped[str] = mapped_column(
+        ForeignKey("program_commits.id"), index=True
+    )
+    automated_review_id: Mapped[str] = mapped_column(
+        ForeignKey("automated_review_runs.id"), index=True
+    )
+    generation_audit_id: Mapped[str] = mapped_column(
+        ForeignKey("generation_audits.id"), index=True
+    )
+    simulation_run_id: Mapped[str] = mapped_column(
+        ForeignKey("simulation_runs.id"), index=True
+    )
+    release_candidate_id: Mapped[str | None] = mapped_column(
+        ForeignKey("release_candidates.id"), index=True
+    )
+    candidate_verification_id: Mapped[str | None] = mapped_column(
+        ForeignKey("release_candidate_verifications.id"), index=True
+    )
+    input_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(48), index=True)
+    verification_level: Mapped[str] = mapped_column(
+        String(40), default="automatic"
+    )
+    checks_json: Mapped[str] = mapped_column(Text, default="[]")
+    external_gates_json: Mapped[str] = mapped_column(Text, default="[]")
+    claim_boundary: Mapped[str] = mapped_column(Text)
+    report_artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("source_artifacts.id")
+    )
+
+
 class MonitoringPlan(Base, TimestampMixin):
     __tablename__ = "monitoring_plans"
     __table_args__ = (UniqueConstraint("release_candidate_id", name="uq_monitoring_plan_candidate"),)

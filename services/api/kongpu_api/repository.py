@@ -153,6 +153,20 @@ def commit_diff(repo: Path, sha: str) -> str:
     return _run(repo, "show", "--format=fuller", "--stat", "--patch", sha)
 
 
+def compare_commits(repo: Path, base_sha: str, target_sha: str) -> str:
+    base = _verified_commit(repo, base_sha)
+    target = _verified_commit(repo, target_sha)
+    return _run(
+        repo,
+        "diff",
+        "--stat",
+        "--patch",
+        "--find-renames",
+        base,
+        target,
+    )
+
+
 def parent_of(repo: Path, sha: str) -> str | None:
     value = _run(repo, "rev-parse", f"{sha}^", check=False)
     return value or None

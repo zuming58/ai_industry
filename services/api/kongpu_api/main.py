@@ -39,14 +39,14 @@ from .models import (
     CommissioningTask, ControlIRRevision, EvidenceArtifact,
     GenerationAudit, GenerationRun, ImportVersion, LockedMachineSpec,
     MachineSpecRevision, MonitoringEvidence, MonitoringPlan,
-    ProgramArtifact, ProgramBranch, ProgramCommit,
+    ProgramArtifact, ProgramBranch, ProgramCommit, ProjectAcceptanceRun,
     ProgramWorkspace, Project, ReviewConfirmation, SourceArtifact,
-    ReleaseCandidate, SimulationRun, SimulationTrace,
+    ReleaseCandidate, ReleaseCandidateVerification, SimulationRun, SimulationTrace,
     TemplateVersion, TestSpecRevision, TraceLink,
     ValidationIssue, new_id,
 )
 from .repository import (
-    RepositoryError, checkout_branch, commit_all, commit_diff, ensure_repository,
+    RepositoryError, checkout_branch, commit_all, commit_diff, compare_commits, ensure_repository,
     is_working_tree_clean, list_files, list_files_at_commit, parent_of, read_file,
     read_file_at_commit, repository_path, validate_branch_name, write_files,
 )
@@ -54,7 +54,8 @@ from .schemas import (
     AdapterDetectRequest, AutomatedReviewRequest, BranchCreateRequest,
     CellPatchRequest, CompileRunRequest,
     CommissioningTaskRequest, ConfirmationRequest, GenerationRequest,
-    MonitoringPlanRequest, MonitoringSnapshotRequest, ReleaseCandidateRequest,
+    CandidateVerificationRequest, MonitoringPlanRequest, MonitoringSnapshotRequest,
+    ProjectAcceptanceRequest, ReleaseCandidateRequest, RestoreBranchRequest,
     SimulationRunRequest,
     ProgramCommitRequest, ProgramFilePatch, ProjectCreate, ProjectPatch,
     WarningAcceptRequest,
@@ -409,6 +410,65 @@ def release_candidate_dict(session: Session, item: ReleaseCandidate) -> dict[str
         "package_sha256": package.sha256 if package else None,
         "package_size_bytes": package.size_bytes if package else None,
         "revision": item.revision,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def candidate_verification_dict(
+    session: Session, item: ReleaseCandidateVerification
+) -> dict[str, Any]:
+    report = session.get(SourceArtifact, item.report_artifact_id)
+    checks = json.loads(item.checks_json)
+    return {
+        "id": item.id,
+        "project_id": item.project_id,
+        "release_candidate_id": item.release_candidate_id,
+        "input_hash": item.input_hash,
+        "status": item.status,
+        "verification_level": item.verification_level,
+        "checks": checks,
+        "summary": {
+            "total": len(checks),
+            "passed": sum(value.get("status") == "passed" for value in checks),
+            "failed": sum(value.get("status") == "failed" for value in checks),
+        },
+        "report_artifact_id": item.report_artifact_id,
+        "report_sha256": report.sha256 if report else None,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def acceptance_run_dict(
+    session: Session, item: ProjectAcceptanceRun
+) -> dict[str, Any]:
+    report = session.get(SourceArtifact, item.report_artifact_id)
+    checks = json.loads(item.checks_json)
+    gates = json.loads(item.external_gates_json)
+    return {
+        "id": item.id,
+        "project_id": item.project_id,
+        "generation_run_id": item.generation_run_id,
+        "program_commit_id": item.program_commit_id,
+        "automated_review_id": item.automated_review_id,
+        "generation_audit_id": item.generation_audit_id,
+        "simulation_run_id": item.simulation_run_id,
+        "release_candidate_id": item.release_candidate_id,
+        "candidate_verification_id": item.candidate_verification_id,
+        "input_hash": item.input_hash,
+        "status": item.status,
+        "verification_level": item.verification_level,
+        "checks": checks,
+        "summary": {
+            "total": len(checks),
+            "passed": sum(value.get("status") == "passed" for value in checks),
+            "external_pending": len(gates),
+        },
+        "external_validation_gates": gates,
+        "claim_boundary": item.claim_boundary,
+        "report_artifact_id": item.report_artifact_id,
+        "report_sha256": report.sha256 if report else None,
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
@@ -804,6 +864,135 @@ def persist_automated_review(
             "repeat_count": item.repeat_count,
             "verification_level": item.verification_level,
         },
+    )
+    return item, False
+
+
+def persist_candidate_verification(
+    session: Session,
+    settings: Settings,
+    candidate: ReleaseCandidate,
+) -> tuple[ReleaseCandidateVerification, bool]:
+    package_record, package = read_artifact_bytes(
+        session, settings, candidate.package_artifact_id
+    )
+    package_hash = sha256_bytes(package)
+    input_record = {
+        "release_candidate_id": candidate.id,
+        "candidate_input_hash": candidate.input_hash,
+        "stored_manifest_hash": candidate.manifest_hash,
+        "package_artifact_id": package_record.id,
+        "package_sha256": package_hash,
+        "package_size_bytes": len(package),
+    }
+    input_hash = sha256_bytes(stable_json_bytes(input_record))
+    existing = session.scalar(
+        select(ReleaseCandidateVerification).where(
+            ReleaseCandidateVerification.release_candidate_id == candidate.id,
+            ReleaseCandidateVerification.input_hash == input_hash,
+        )
+    )
+    if existing is not None:
+        return existing, True
+
+    try:
+        manifest = verify_delivery_candidate(package)
+    except DeliveryInputError as exc:
+        raise api_error(
+            "DELIVERY_PACKAGE_VERIFICATION_FAILED",
+            str(exc),
+            409,
+            action="停止使用该候选包并检查本机工件库",
+        )
+    stored_manifest = json.loads(candidate.manifest_json)
+    calculated_manifest_hash = sha256_bytes(stable_json_bytes(manifest))
+    baseline = manifest.get("baseline", {})
+    if manifest != stored_manifest or calculated_manifest_hash != candidate.manifest_hash:
+        raise api_error(
+            "DELIVERY_MANIFEST_MISMATCH",
+            "包内 Manifest 与候选记录不一致",
+            409,
+            action="停止使用该候选包并检查本机数据库与工件库",
+        )
+    if (
+        baseline.get("generation_run_id") != candidate.generation_run_id
+        or baseline.get("program_commit_id") != candidate.program_commit_id
+    ):
+        raise api_error(
+            "DELIVERY_BASELINE_MISMATCH",
+            "候选包 Manifest 的生成任务或 Commit 基线不一致",
+            409,
+            action="停止使用该候选包并重新生成候选",
+        )
+    checks = [
+        {
+            "id": "package_artifact_hash",
+            "title": "ZIP 外层工件哈希",
+            "status": "passed",
+            "detail": "ZIP 与内容寻址工件元数据一致。",
+            "evidence": {"sha256": package_hash},
+        },
+        {
+            "id": "zip_entry_integrity",
+            "title": "包内路径、大小与内容哈希",
+            "status": "passed",
+            "detail": "所有 ZIP 条目均通过路径、重复项、大小和 SHA-256 复核。",
+            "evidence": {"entry_count": len(manifest.get("entries", []))},
+        },
+        {
+            "id": "manifest_integrity",
+            "title": "Manifest 不可变性",
+            "status": "passed",
+            "detail": "包内 Manifest 与数据库记录及哈希一致。",
+            "evidence": {"manifest_hash": calculated_manifest_hash},
+        },
+        {
+            "id": "candidate_baseline",
+            "title": "候选基线身份",
+            "status": "passed",
+            "detail": "Manifest 绑定当前候选的生成任务与程序 Commit。",
+            "evidence": {
+                "generation_run_id": candidate.generation_run_id,
+                "program_commit_id": candidate.program_commit_id,
+            },
+        },
+    ]
+    report = {
+        "schema": "kongpu-release-candidate-verification/v1",
+        "input": input_record,
+        "input_hash": input_hash,
+        "status": "passed",
+        "verification_level": "automatic_integrity",
+        "checks": checks,
+        "claim_boundary": "只证明候选 ZIP 在本机工件库中的完整性，不代表厂商编译、硬件实测或电气工程师确认。",
+    }
+    stored = store_bytes(
+        session,
+        settings,
+        json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2).encode(
+            "utf-8"
+        ),
+        f"release-verification-{candidate.id}-{input_hash[:12]}.json",
+        "application/json",
+    )
+    item = ReleaseCandidateVerification(
+        project_id=candidate.project_id,
+        release_candidate_id=candidate.id,
+        input_hash=input_hash,
+        status="passed",
+        verification_level="automatic_integrity",
+        checks_json=json.dumps(checks, ensure_ascii=False, sort_keys=True),
+        report_artifact_id=stored.record.id,
+    )
+    session.add(item)
+    session.flush()
+    audit(
+        session,
+        candidate.project_id,
+        "release.candidate_verified",
+        "ReleaseCandidateVerification",
+        item.id,
+        {"input_hash": input_hash, "status": item.status},
     )
     return item, False
 
@@ -1409,6 +1598,292 @@ def get_release_candidate(
     if item is None:
         raise api_error("RELEASE_CANDIDATE_NOT_FOUND", "交付候选包不存在", 404)
     return release_candidate_dict(session, item)
+
+
+@router.post("/api/v1/release-candidates/{candidate_id}/verify")
+def verify_release_candidate(
+    candidate_id: str,
+    payload: CandidateVerificationRequest,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    item = session.get(ReleaseCandidate, candidate_id)
+    if item is None:
+        raise api_error("RELEASE_CANDIDATE_NOT_FOUND", "交付候选包不存在", 404)
+    check_expected_revision(
+        item.revision, payload.expected_candidate_revision, if_match
+    )
+    verification, reused = persist_candidate_verification(
+        session, runtime_settings, item
+    )
+    session.commit()
+    result = candidate_verification_dict(session, verification)
+    result["reused"] = reused
+    return result
+
+
+@router.post("/api/v1/projects/{project_id}/acceptance-runs", status_code=201)
+def create_project_acceptance_run(
+    project_id: str,
+    payload: ProjectAcceptanceRequest,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    project = require_project(session, project_id)
+    run = session.get(GenerationRun, payload.generation_run_id)
+    if run is None or run.project_id != project.id:
+        raise api_error(
+            "GENERATION_RUN_NOT_FOUND",
+            "生成任务不存在或不属于当前项目",
+            404,
+        )
+    check_expected_revision(
+        run.revision, payload.expected_generation_revision, if_match
+    )
+    _spec, _bundle, commit, test_spec = generation_baseline(
+        session, runtime_settings, run
+    )
+    review = require_current_automated_review(session, run, commit)
+    generation_audit, _audit_reused = persist_generation_audit(
+        session, runtime_settings, run
+    )
+    if generation_audit.status == "blocked":
+        raise api_error(
+            "GENERATION_AUDIT_BLOCKED",
+            "当前 Commit 的确定性静态审计存在 blocker",
+            409,
+            action="修复后创建新 Commit 并重新运行验收",
+        )
+    simulation = session.scalar(
+        select(SimulationRun)
+        .where(
+            SimulationRun.generation_run_id == run.id,
+            SimulationRun.program_commit_id == commit.id,
+            SimulationRun.test_spec_revision_id == test_spec.id,
+            SimulationRun.status == "review_ready",
+        )
+        .order_by(SimulationRun.created_at.desc())
+    )
+    if simulation is None or not simulation.trace_artifact_id:
+        raise api_error(
+            "REFERENCE_SIMULATION_REQUIRED",
+            "当前 Commit 尚无通过的控谱参考逻辑模拟",
+            409,
+            action="在 P08 对当前 Commit 重新运行参考逻辑模拟",
+        )
+    review_artifact, _review_content = read_artifact_bytes(
+        session, runtime_settings, review.report_artifact_id
+    )
+    if not generation_audit.report_artifact_id:
+        raise api_error("GENERATION_AUDIT_INCOMPLETE", "静态审计报告工件缺失", 409)
+    audit_artifact, _audit_content = read_artifact_bytes(
+        session, runtime_settings, generation_audit.report_artifact_id
+    )
+    trace_artifact, _trace_content = read_artifact_bytes(
+        session, runtime_settings, simulation.trace_artifact_id
+    )
+
+    candidate: ReleaseCandidate | None = None
+    candidate_verification: ReleaseCandidateVerification | None = None
+    if payload.release_candidate_id:
+        candidate = session.get(ReleaseCandidate, payload.release_candidate_id)
+        if (
+            candidate is None
+            or candidate.project_id != project.id
+            or candidate.generation_run_id != run.id
+            or candidate.program_commit_id != commit.id
+        ):
+            raise api_error(
+                "RELEASE_CANDIDATE_BASELINE_MISMATCH",
+                "交付候选包不存在或不属于当前生成任务和 Commit",
+                409,
+            )
+        candidate_verification, _candidate_reused = persist_candidate_verification(
+            session, runtime_settings, candidate
+        )
+
+    checks = [
+        {
+            "id": "program_commit_baseline",
+            "title": "程序 Commit 与不可变生成基线",
+            "status": "passed",
+            "detail": "当前 Commit、MachineSpec、Control IR 与 TestSpec 绑定一致。",
+            "evidence": {"program_commit_id": commit.id, "git_sha": commit.git_sha},
+        },
+        {
+            "id": "automated_review",
+            "title": "20 次确定性项目自动审核",
+            "status": "passed",
+            "detail": "当前 Commit 的项目自动审核无 blocker。",
+            "evidence": {"id": review.id, "input_hash": review.input_hash},
+        },
+        {
+            "id": "static_audit",
+            "title": "生成物确定性静态审计",
+            "status": "passed",
+            "detail": "当前 Commit 的静态审计无 blocker。",
+            "evidence": {
+                "id": generation_audit.id,
+                "input_hash": generation_audit.input_hash,
+            },
+        },
+        {
+            "id": "reference_simulation",
+            "title": "控谱参考逻辑模拟",
+            "status": "passed",
+            "detail": "当前 Commit 和 TestSpec 的参考逻辑模拟已形成不可变 Trace。",
+            "evidence": {
+                "id": simulation.id,
+                "engine_version": simulation.engine_version,
+                "trace_sha256": trace_artifact.sha256,
+            },
+        },
+        {
+            "id": "release_candidate_integrity",
+            "title": "交付候选包完整性",
+            "status": "passed" if candidate_verification else "not_applicable",
+            "detail": (
+                "候选 ZIP 已重新读取并通过独立完整性复核。"
+                if candidate_verification
+                else "本次验收未指定交付候选包，不评价 ZIP 完整性。"
+            ),
+            "evidence": {
+                "candidate_id": candidate.id if candidate else None,
+                "verification_id": (
+                    candidate_verification.id if candidate_verification else None
+                ),
+            },
+        },
+    ]
+    input_record = {
+        "schema": "kongpu-project-acceptance/v1",
+        "project_id": project.id,
+        "generation_run_id": run.id,
+        "generator_version": run.generator_version,
+        "program_commit_id": commit.id,
+        "git_sha": commit.git_sha,
+        "automated_review": {
+            "id": review.id,
+            "input_hash": review.input_hash,
+            "report_sha256": review_artifact.sha256,
+        },
+        "static_audit": {
+            "id": generation_audit.id,
+            "input_hash": generation_audit.input_hash,
+            "report_sha256": audit_artifact.sha256,
+        },
+        "reference_simulation": {
+            "id": simulation.id,
+            "engine_version": simulation.engine_version,
+            "test_spec_hash": test_spec.content_hash,
+            "trace_sha256": trace_artifact.sha256,
+        },
+        "release_candidate": (
+            {
+                "id": candidate.id,
+                "manifest_hash": candidate.manifest_hash,
+                "verification_input_hash": candidate_verification.input_hash,
+            }
+            if candidate and candidate_verification
+            else None
+        ),
+    }
+    input_hash = sha256_bytes(stable_json_bytes(input_record))
+    existing = session.scalar(
+        select(ProjectAcceptanceRun).where(
+            ProjectAcceptanceRun.project_id == project.id,
+            ProjectAcceptanceRun.input_hash == input_hash,
+        )
+    )
+    if existing is not None:
+        session.rollback()
+        result = acceptance_run_dict(session, existing)
+        result["reused"] = True
+        return result
+
+    gates = json.loads(review.external_gates_json)
+    claim_boundary = (
+        "本报告只证明当前 Commit 的自动审核、静态审计、参考逻辑模拟"
+        "及所选候选包完整性；GX Works3、GX Simulator3、真实 FX5U、"
+        "安全回路和电气工程师确认仍为待集中外部验证。"
+    )
+    report = {
+        "schema": "kongpu-project-acceptance/v1",
+        "input": input_record,
+        "input_hash": input_hash,
+        "status": "automatic_passed_external_pending",
+        "verification_level": "automatic",
+        "checks": checks,
+        "external_validation_gates": gates,
+        "claim_boundary": claim_boundary,
+    }
+    stored = store_bytes(
+        session,
+        runtime_settings,
+        json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2).encode(
+            "utf-8"
+        ),
+        f"project-acceptance-{project.id}-{input_hash[:12]}.json",
+        "application/json",
+    )
+    item = ProjectAcceptanceRun(
+        project_id=project.id,
+        generation_run_id=run.id,
+        program_commit_id=commit.id,
+        automated_review_id=review.id,
+        generation_audit_id=generation_audit.id,
+        simulation_run_id=simulation.id,
+        release_candidate_id=candidate.id if candidate else None,
+        candidate_verification_id=(
+            candidate_verification.id if candidate_verification else None
+        ),
+        input_hash=input_hash,
+        status="automatic_passed_external_pending",
+        verification_level="automatic",
+        checks_json=json.dumps(checks, ensure_ascii=False, sort_keys=True),
+        external_gates_json=json.dumps(gates, ensure_ascii=False, sort_keys=True),
+        claim_boundary=claim_boundary,
+        report_artifact_id=stored.record.id,
+    )
+    session.add(item)
+    session.flush()
+    audit(
+        session,
+        project.id,
+        "project.acceptance_completed",
+        "ProjectAcceptanceRun",
+        item.id,
+        {"input_hash": input_hash, "status": item.status},
+    )
+    session.commit()
+    result = acceptance_run_dict(session, item)
+    result["reused"] = False
+    return result
+
+
+@router.get("/api/v1/projects/{project_id}/acceptance-runs")
+def list_project_acceptance_runs(
+    project_id: str, session: Session = Depends(app_session)
+) -> list[dict[str, Any]]:
+    require_project(session, project_id)
+    items = session.scalars(
+        select(ProjectAcceptanceRun)
+        .where(ProjectAcceptanceRun.project_id == project_id)
+        .order_by(ProjectAcceptanceRun.created_at.desc())
+    ).all()
+    return [acceptance_run_dict(session, item) for item in items]
+
+
+@router.get("/api/v1/acceptance-runs/{acceptance_id}")
+def get_project_acceptance_run(
+    acceptance_id: str, session: Session = Depends(app_session)
+) -> dict[str, Any]:
+    item = session.get(ProjectAcceptanceRun, acceptance_id)
+    if item is None:
+        raise api_error("ACCEPTANCE_RUN_NOT_FOUND", "项目自动验收报告不存在", 404)
+    return acceptance_run_dict(session, item)
 
 
 @router.post("/api/v1/projects/{project_id}/monitoring-plans", status_code=201)
@@ -2581,6 +3056,199 @@ def get_program_commit_diff(
     except RepositoryError as exc:
         raise api_error("REPOSITORY_ERROR", str(exc), 422)
     return {"commit": commit_dict(commit), "diff": diff}
+
+
+@router.get("/api/v1/commits/{base_commit_id}/diff/{target_commit_id}")
+def compare_program_commits(
+    base_commit_id: str,
+    target_commit_id: str,
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    base = session.get(ProgramCommit, base_commit_id)
+    target = session.get(ProgramCommit, target_commit_id)
+    if base is None or target is None:
+        raise api_error("PROGRAM_COMMIT_NOT_FOUND", "程序提交不存在", 404)
+    base_branch = require_branch(session, base.branch_id)
+    target_branch = require_branch(session, target.branch_id)
+    base_workspace = require_workspace(session, base_branch.workspace_id)
+    target_workspace = require_workspace(session, target_branch.workspace_id)
+    if base_workspace.id != target_workspace.id:
+        raise api_error(
+            "COMMIT_PROJECT_MISMATCH",
+            "不能比较不同项目仓库中的 Commit",
+            409,
+        )
+    repo = ensure_repository(runtime_settings, base_workspace.project_id)
+    try:
+        diff = compare_commits(repo, base.git_sha, target.git_sha)
+    except RepositoryError as exc:
+        raise api_error("REPOSITORY_ERROR", str(exc), 422)
+    return {
+        "base": commit_dict(base),
+        "target": commit_dict(target),
+        "same_commit": base.git_sha == target.git_sha,
+        "diff": diff,
+    }
+
+
+@router.post("/api/v1/commits/{commit_id}/restore-branches", status_code=201)
+def create_restore_branch(
+    commit_id: str,
+    payload: RestoreBranchRequest,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    source_commit = session.get(ProgramCommit, commit_id)
+    if source_commit is None:
+        raise api_error("PROGRAM_COMMIT_NOT_FOUND", "程序提交不存在", 404)
+    source_branch = require_branch(session, source_commit.branch_id)
+    check_expected_revision(
+        source_branch.revision,
+        payload.expected_source_branch_revision,
+        if_match,
+    )
+    workspace = require_workspace(session, source_branch.workspace_id)
+    source_run = session.scalar(
+        select(GenerationRun).where(
+            GenerationRun.branch_id == source_branch.id,
+            GenerationRun.spec_revision_id == source_commit.machine_spec_revision_id,
+            GenerationRun.control_ir_revision_id == source_commit.control_ir_revision_id,
+        )
+    )
+    if source_run is None or not source_run.control_ir_revision_id:
+        raise api_error(
+            "GENERATION_BASELINE_INCOMPLETE",
+            "历史 Commit 缺少可恢复的生成基线",
+            409,
+        )
+    source_test_spec = session.scalar(
+        select(TestSpecRevision).where(
+            TestSpecRevision.generation_run_id == source_run.id
+        )
+    )
+    if source_test_spec is None:
+        raise api_error("TEST_SPEC_NOT_FOUND", "历史 Commit 缺少 TestSpec", 409)
+    repo = ensure_repository(runtime_settings, workspace.project_id)
+    if source_branch.status != "clean" or not is_working_tree_clean(repo):
+        raise api_error(
+            "PROGRAM_BRANCH_DIRTY",
+            "程序仓库存在未提交修改，不能创建恢复分支",
+            409,
+            action="先提交当前工作分支修改",
+        )
+    branch_name = payload.name or (
+        f"restore/{source_commit.git_sha[:12]}-{new_id()[:8]}"
+    )
+    try:
+        validate_branch_name(branch_name)
+        duplicate = session.scalar(
+            select(ProgramBranch).where(
+                ProgramBranch.workspace_id == workspace.id,
+                ProgramBranch.name == branch_name,
+            )
+        )
+        if duplicate is not None:
+            raise api_error("BRANCH_ALREADY_EXISTS", "恢复分支已存在", 409)
+        checkout_branch(repo, branch_name, source_commit.git_sha)
+    except RepositoryError as exc:
+        raise api_error("REPOSITORY_ERROR", str(exc), 422)
+
+    branch = ProgramBranch(
+        workspace_id=workspace.id,
+        name=branch_name,
+        git_ref=f"refs/heads/{branch_name}",
+        base_commit=source_commit.git_sha,
+        head_commit=source_commit.git_sha,
+        status="clean",
+    )
+    session.add(branch)
+    session.flush()
+    run = GenerationRun(
+        project_id=workspace.project_id,
+        spec_revision_id=source_run.spec_revision_id,
+        branch_id=branch.id,
+        control_ir_revision_id=source_run.control_ir_revision_id,
+        generator_version=source_run.generator_version,
+        status="review_ready",
+        warnings_json=source_run.warnings_json,
+        revision=1,
+    )
+    session.add(run)
+    session.flush()
+    for artifact in session.scalars(
+        select(ProgramArtifact).where(
+            ProgramArtifact.generation_run_id == source_run.id
+        )
+    ).all():
+        session.add(
+            ProgramArtifact(
+                generation_run_id=run.id,
+                path=artifact.path,
+                kind=artifact.kind,
+                content_hash=artifact.content_hash,
+                source_artifact_id=artifact.source_artifact_id,
+            )
+        )
+    session.add(
+        TestSpecRevision(
+            generation_run_id=run.id,
+            content_hash=source_test_spec.content_hash,
+            data_json=source_test_spec.data_json,
+        )
+    )
+    for link in session.scalars(
+        select(TraceLink).where(TraceLink.generation_run_id == source_run.id)
+    ).all():
+        session.add(
+            TraceLink(
+                generation_run_id=run.id,
+                output_path=link.output_path,
+                output_symbol=link.output_symbol,
+                output_line=link.output_line,
+                entity_type=link.entity_type,
+                entity_id=link.entity_id,
+                source_sheet=link.source_sheet,
+                source_row=link.source_row,
+            )
+        )
+    restored_commit = ProgramCommit(
+        branch_id=branch.id,
+        git_sha=source_commit.git_sha,
+        message=f"Restore baseline from {source_commit.git_sha[:12]}",
+        author="控谱恢复操作",
+        machine_spec_revision_id=source_commit.machine_spec_revision_id,
+        control_ir_revision_id=source_commit.control_ir_revision_id,
+    )
+    session.add(restored_commit)
+    session.flush()
+    workspace.revision += 1
+    audit(
+        session,
+        workspace.project_id,
+        "program.restore_branch_created",
+        "ProgramBranch",
+        branch.id,
+        {
+            "source_program_commit_id": source_commit.id,
+            "source_git_sha": source_commit.git_sha,
+            "generation_run_id": run.id,
+        },
+    )
+    persist_automated_review(session, runtime_settings, run, repeat_count=20)
+    session.commit()
+    return {
+        "branch": branch_dict(branch),
+        "generation_run": generation_dict(session, run),
+        "commit": commit_dict(restored_commit),
+        "source_commit": commit_dict(source_commit),
+        "inherited_results": [],
+        "verification_boundary": (
+            "只恢复不可变源码基线并重新运行自动审核；不继承静态审计、"
+            "参考模拟、候选包、厂商工具或硬件验证结果。"
+        ),
+    }
 
 
 app = create_app()

@@ -70,6 +70,11 @@ class ProgramCommitRequest(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
+class RestoreBranchRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    expected_source_branch_revision: int = Field(ge=1)
+
+
 class AdapterDetectRequest(BaseModel):
     project_id: str | None = None
     adapter_id: str = Field(min_length=2, max_length=80)
@@ -96,6 +101,16 @@ class AutomatedReviewRequest(BaseModel):
 
 class ReleaseCandidateRequest(BaseModel):
     generation_run_id: str
+    expected_generation_revision: int = Field(ge=1)
+
+
+class CandidateVerificationRequest(BaseModel):
+    expected_candidate_revision: int = Field(ge=1)
+
+
+class ProjectAcceptanceRequest(BaseModel):
+    generation_run_id: str
+    release_candidate_id: str | None = None
     expected_generation_revision: int = Field(ge=1)
 
 
