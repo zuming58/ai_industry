@@ -20,7 +20,7 @@
 在进入现场验证前，P07/P08/P12 已可由 Agent 自动完成以下准备工作：
 
 - P06 在不可变生成 Commit 落库后自动执行项目审核：默认重复生成 20 次，核验基线、来源追溯、静态审计、参考执行器、变异检测和 Adapter 安全边界，并保存输入哈希与不可变报告工件。
-- P07 恢复并展示 Automated Review v1 的检查结果、报告哈希、恢复动作和五项 pending_external 验证门；blocked 时不会创建编译准备任务。
+- P07 恢复并展示 Automated Review v3 的检查结果、报告哈希、恢复动作和五项 pending_external 验证门；blocked 时不会创建编译准备任务。
 - P07 创建 manual_required 编译准备任务，显示 Adapter、环境快照、Commit 和诊断；人工导入日志/截图后仍为 manual_unverified。
 - P08 运行版本化 TestSpec DSL 的控谱参考逻辑模拟，保存 automatic_reference 结果、用例汇总、周期 Trace 和工件哈希；不得称为 GX Simulator3。
 - P12 只读检测平台、Python、受控环境变量路径和 Adapter 能力；不启动厂商程序、不保存 PLC 写入凭据。

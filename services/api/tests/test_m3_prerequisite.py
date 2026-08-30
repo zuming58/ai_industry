@@ -87,6 +87,7 @@ def test_automated_review_is_persisted_reused_and_downloadable(
     assert len(listed.json()) == 1
     automatic = listed.json()[0]
     assert automatic["status"] == "passed"
+    assert automatic["review_version"] == "3"
     assert automatic["verification_level"] == "automatic"
     assert automatic["repeat_count"] == 20
     assert automatic["summary"] == {
@@ -111,6 +112,7 @@ def test_automated_review_is_persisted_reused_and_downloadable(
         if check["id"] == "mutation_detection"
     )
     assert all(item["caught"] for item in mutations["evidence"]["mutations"])
+    assert any(item["id"] == "condition_flip_behavior" for item in mutations["evidence"]["mutations"])
 
     downloaded = client.get(f"/api/v1/artifacts/{automatic['report_artifact_id']}")
     assert downloaded.status_code == 200
@@ -131,6 +133,23 @@ def test_automated_review_is_persisted_reused_and_downloadable(
     assert repeated.json()["id"] == automatic["id"]
     assert repeated.json()["reused"] is True
     assert repeated.json()["report_sha256"] == automatic["report_sha256"]
+
+
+def test_automated_review_source_coverage_uses_iec_identifier_semantics(locked_example: dict) -> None:
+    spec = locked_example["revision"]["data"]
+    bundle = generate_bundle(spec)
+    for link in bundle.trace_links:
+        link["entity_id"] = str(link["entity_id"]).swapcase()
+    report = run_automated_review(
+        spec,
+        bundle,
+        run_generator_version=bundle.control_ir["generator_version"],
+        program_commit_id="commit-id",
+        program_git_sha="0" * 40,
+        repeat_count=2,
+    )
+    coverage = next(item for item in report["checks"] if item["id"] == "source_trace_coverage")
+    assert coverage["status"] == "passed"
 
 
 def test_automated_review_validates_limits_revision_and_generator_version(

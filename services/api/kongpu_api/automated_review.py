@@ -9,7 +9,7 @@ from .generator import GeneratedBundle, GENERATOR_VERSION, content_hash, generat
 from .simulation import SimulationInputError, run_reference_simulation, run_test_spec
 
 
-AUTOMATED_REVIEW_VERSION = "2"
+AUTOMATED_REVIEW_VERSION = "3"
 DEFAULT_REPEAT_COUNT = 20
 EXTERNAL_VALIDATION_GATES = (
     {
@@ -99,21 +99,26 @@ def _check(
     }
 
 
+def _fold_identifier(value: Any) -> str:
+    """Normalize IEC/ST identifiers without changing diagnostic spelling."""
+    return str(value or "").strip().casefold()
+
+
 def _source_coverage(spec: dict[str, Any], bundle: GeneratedBundle) -> tuple[bool, dict[str, Any]]:
     expected: set[tuple[str, str]] = set()
     for item in spec.get("components", []):
-        expected.add(("component", str(item.get("component_id"))))
+        expected.add(("component", _fold_identifier(item.get("component_id"))))
     for item in spec.get("signals", []):
-        expected.add(("signal", str(item.get("signal_id"))))
+        expected.add(("signal", _fold_identifier(item.get("signal_id"))))
     for item in spec.get("sequence", []):
-        expected.add(("sequence_step", str(item.get("step_id"))))
+        expected.add(("sequence_step", _fold_identifier(item.get("step_id"))))
     for item in spec.get("interlocks", []):
-        expected.add(("interlock", str(item.get("interlock_id"))))
+        expected.add(("interlock", _fold_identifier(item.get("interlock_id"))))
     for item in spec.get("exceptions", []):
-        expected.add(("exception", str(item.get("exception_id"))))
+        expected.add(("exception", _fold_identifier(item.get("exception_id"))))
 
     actual = {
-        (str(item.get("entity_type")), str(item.get("entity_id")))
+        (str(item.get("entity_type")), _fold_identifier(item.get("entity_id")))
         for item in bundle.trace_links
         if item.get("source_sheet") and item.get("source_row")
     }
@@ -121,15 +126,15 @@ def _source_coverage(spec: dict[str, Any], bundle: GeneratedBundle) -> tuple[boo
 
     tests = bundle.test_spec.get("tests", [])
     expected_tests = {
-        *(f"TEST_{item.get('step_id')}" for item in spec.get("sequence", [])),
-        *(f"TEST_{item.get('exception_id')}" for item in spec.get("exceptions", [])),
+        *(_fold_identifier(f"TEST_{item.get('step_id')}") for item in spec.get("sequence", [])),
+        *(_fold_identifier(f"TEST_{item.get('exception_id')}") for item in spec.get("exceptions", [])),
     }
     traced_tests = {
-        str(item.get("entity_id"))
+        _fold_identifier(item.get("entity_id"))
         for item in bundle.trace_links
         if item.get("entity_type") == "test_case" and item.get("source_sheet") and item.get("source_row")
     }
-    actual_tests = {str(item.get("id")) for item in tests}
+    actual_tests = {_fold_identifier(item.get("id")) for item in tests}
     missing_tests = sorted(expected_tests - actual_tests)
     missing_test_sources = sorted(expected_tests - traced_tests)
     return not missing and not missing_tests and not missing_test_sources, {
@@ -190,6 +195,51 @@ def _mutation_checks(spec: dict[str, Any], bundle: GeneratedBundle) -> tuple[boo
             "id": "removed_interlocks",
             "caught": "INTERLOCK_NOT_DEFINED" in interlock_codes,
             "detected_codes": sorted(interlock_codes),
+        }
+    )
+
+    # A condition flip remains valid ST, so it needs behavioral detection in
+    # addition to the static audit. Use the generated test's declared inputs.
+    flip_step, flip_case = next(
+        (
+            (step, test)
+            for step in steps
+            for test in bundle.test_spec.get("tests", [])
+            if _fold_identifier(test.get("source_step_id"))
+            == _fold_identifier(step.get("id"))
+        ),
+        (None, None),
+    )
+    condition = str((flip_step or {}).get("completion_condition") or "TRUE").strip() or "TRUE"
+    flip_caught = False
+    flip_events: list[str] = []
+    if flip_step is not None and flip_case is not None:
+        try:
+            inputs = dict(flip_case.get("inputs") or {})
+            baseline_result = run_reference_simulation(bundle.control_ir, inputs, max_cycles=20)
+            flipped = deepcopy(bundle.control_ir)
+            flipped_step = next(
+                item for item in flipped["steps"]
+                if _fold_identifier(item.get("id")) == _fold_identifier(flip_step.get("id"))
+            )
+            flipped_step["completion_condition"] = f"NOT ({condition})"
+            flipped_result = run_reference_simulation(flipped, inputs, max_cycles=20)
+            flip_caught = (
+                baseline_result.get("status") != flipped_result.get("status")
+                or baseline_result.get("final_step_id") != flipped_result.get("final_step_id")
+                or baseline_result.get("cycles") != flipped_result.get("cycles")
+            )
+            flip_events = [
+                f"baseline:{baseline_result.get('status')}:{baseline_result.get('cycles')}",
+                f"flipped:{flipped_result.get('status')}:{flipped_result.get('cycles')}",
+            ]
+        except (SimulationInputError, ValueError) as exc:
+            flip_events = [f"error:{exc}"]
+    results.append(
+        {
+            "id": "condition_flip_behavior",
+            "caught": flip_caught,
+            "detected_codes": flip_events,
         }
     )
 
@@ -339,7 +389,7 @@ def run_automated_review(
             "mutation_detection",
             "审计与参考执行器变异检测",
             mutations_passed,
-            "断引用、断流程、危险操作、互锁删除、缺反馈和任意代码注入均被检测。" if mutations_passed else "至少一个故意植入的缺陷未被检测。",
+            "断引用、断流程、危险操作、互锁删除、条件翻转、缺反馈和任意代码注入均被检测。" if mutations_passed else "至少一个故意植入的缺陷未被检测。",
             evidence={"mutations": mutations},
             action=None if mutations_passed else "补充相应审计规则或模拟断言",
         )

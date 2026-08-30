@@ -2811,7 +2811,7 @@ def project_timeline(session: Session, project_id: str) -> dict[str, Any]:
             detail=f"{row.status} · 重复 {row.repeat_count} 次",
             author="控谱自动审核器",
             request="生成后确定性审核",
-            tool="Automated Review v1",
+            tool=f"Automated Review v{row.review_version}",
             status=row.status,
             verification_level=row.verification_level,
             source={"page": "compile", "review_id": row.id, "program_commit_id": row.program_commit_id},

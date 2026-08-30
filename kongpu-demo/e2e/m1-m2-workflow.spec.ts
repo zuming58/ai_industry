@@ -84,7 +84,7 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
 
   await page.getByRole("link", { name: "P07 编译" }).click();
   await expect(page.getByRole("heading", { name: "项目自动审核与编译准备" })).toBeVisible();
-  await expect(page.getByText(/Automated Review v1/)).toBeVisible();
+  await expect(page.getByText(/Automated Review v3/)).toBeVisible();
   await expect(page.getByText("确定性重复生成")).toBeVisible();
   await expect(page.getByText("集中外部验证门")).toBeVisible();
   await expect(page.getByText("GX Works3 导入与 Rebuild All")).toBeVisible();

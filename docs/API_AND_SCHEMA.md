@@ -87,7 +87,7 @@ Adapter v1 能力固定为 detect_environment、get_capabilities、prepare_works
 
 生成物审计 v2 绑定生成任务创建时的不可变 ProgramCommit，并再次核验 Control IR、TestSpec、ProgramArtifact 与锁定 MachineSpec 的内容哈希。IEC/ST 标识符按不区分大小写的语义比较，但诊断保留原始拼写；审计 `input_hash` 显式包含 `audit_version`、生成器版本和全部不可变输入，版本变化不会复用旧报告。发现包含严重级别、文件/行号、稳定对象 ID、Excel 来源和恢复动作。
 
-项目自动审核在生成 Commit 和内容寻址工件落库后自动触发，默认 repeat_count=20。报告固定包含不可变基线、重复生成、来源追溯、静态审计、参考执行器、变异检测和安全边界七项检查，以及五项 pending_external 外部验证门。POST 请求包含 generation_run_id、repeat_count（2–50）和 expected_generation_revision，并接受 If-Match；过期版本返回 409。
+项目自动审核在生成 Commit 和内容寻址工件落库后自动触发，默认 repeat_count=20。报告固定包含不可变基线、重复生成、来源追溯、静态审计、参考执行器、变异检测和安全边界七项检查，以及五项 pending_external 外部验证门；变异检测覆盖断引用、断流程、危险操作、互锁删除、条件翻转行为、缺反馈和任意代码注入，来源 ID 按 IEC/ST 不区分大小写比较。POST 请求包含 generation_run_id、repeat_count（2–50）和 expected_generation_revision，并接受 If-Match；过期版本返回 409。
 
 AutomatedReviewRun 以 generation_run_id、review_version 和 input_hash 唯一标识。相同不可变输入复用原报告和 SHA-256 工件，不覆盖历史；生成器版本、重复次数或基线变化会产生不同 input_hash。状态只有 passed 或 blocked，验证等级固定为 automatic。blocked 报告会保留当前生成基线并给出恢复动作，但禁止进入编译准备。
 
