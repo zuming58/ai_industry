@@ -1696,7 +1696,16 @@ def create_simulation_run(
     check_expected_revision(generation.revision, payload.expected_generation_revision, if_match)
     require_current_automated_review(session, generation, baseline_commit)
     try:
-        result = run_test_spec(baseline_bundle.control_ir, baseline_bundle.test_spec, payload.input_overrides, payload.max_cycles)
+        result = run_test_spec(
+            baseline_bundle.control_ir,
+            baseline_bundle.test_spec,
+            payload.input_overrides,
+            payload.max_cycles,
+            input_schedule=payload.input_schedule,
+            restart_cycles=payload.restart_cycles,
+            disconnect_cycles=payload.disconnect_cycles,
+            cycle_time_ms=payload.cycle_time_ms,
+        )
     except SimulationInputError as exc:
         raise api_error("SIMULATION_INPUT_INVALID", str(exc), 422, action="检查输入变量和最大周期")
     test_spec_row = test_spec
@@ -1704,7 +1713,25 @@ def create_simulation_run(
     session.add(item)
     session.flush()
     for trace in result["traces"]:
-        session.add(SimulationTrace(simulation_run_id=item.id, cycle=trace["cycle"], step_id=trace.get("step_id"), inputs_json=json.dumps(trace["inputs"], ensure_ascii=False, sort_keys=True), outputs_json=json.dumps(trace["outputs"], ensure_ascii=False, sort_keys=True), events_json=json.dumps(trace["events"], ensure_ascii=False)))
+        session.add(SimulationTrace(
+            simulation_run_id=item.id,
+            cycle=trace["cycle"],
+            step_id=trace.get("step_id"),
+            inputs_json=json.dumps(trace["inputs"], ensure_ascii=False, sort_keys=True),
+            outputs_json=json.dumps(trace["outputs"], ensure_ascii=False, sort_keys=True),
+            events_json=json.dumps(
+                {
+                    "events": trace.get("events", []),
+                    "entry_condition": trace.get("entry_condition"),
+                    "completion_condition": trace.get("completion_condition"),
+                    "source": trace.get("source"),
+                    "communication": trace.get("communication", "connected"),
+                    "internal_state": trace.get("internal_state", {}),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        ))
     trace_bytes = json.dumps({"simulation_run_id": item.id, "generation_run_id": generation.id, "engine_version": result["engine_version"], "verification_level": "automatic_reference", "result": result}, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8")
     trace_artifact = store_bytes(session, runtime_settings, trace_bytes, f"simulation-trace-{item.id}.json", "application/json")
     item.trace_artifact_id = trace_artifact.record.id
@@ -1727,7 +1754,19 @@ def get_simulation_trace(run_id: str, session: Session = Depends(app_session)) -
     if item is None:
         raise api_error("SIMULATION_RUN_NOT_FOUND", "模拟任务不存在", 404)
     traces = session.scalars(select(SimulationTrace).where(SimulationTrace.simulation_run_id == item.id).order_by(SimulationTrace.cycle)).all()
-    return {"simulation_run_id": item.id, "engine_version": item.engine_version, "verification_level": item.verification_level, "traces": [{"cycle": trace.cycle, "step_id": trace.step_id, "inputs": json.loads(trace.inputs_json), "outputs": json.loads(trace.outputs_json), "events": json.loads(trace.events_json)} for trace in traces]}
+    serialized = []
+    for trace in traces:
+        metadata = json.loads(trace.events_json)
+        if isinstance(metadata, list):
+            metadata = {"events": metadata}
+        serialized.append({
+            "cycle": trace.cycle,
+            "step_id": trace.step_id,
+            "inputs": json.loads(trace.inputs_json),
+            "outputs": json.loads(trace.outputs_json),
+            **metadata,
+        })
+    return {"simulation_run_id": item.id, "engine_version": item.engine_version, "verification_level": item.verification_level, "traces": serialized}
 
 
 @router.get("/api/v1/projects/{project_id}/simulation-runs")

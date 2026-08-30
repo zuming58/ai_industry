@@ -295,10 +295,22 @@ def run_automated_review(
         )
     )
 
-    first_simulation = run_test_spec(baseline.control_ir, baseline.test_spec, {}, 100)
-    second_simulation = run_test_spec(baseline.control_ir, baseline.test_spec, {}, 100)
+    simulation_error: SimulationInputError | ValueError | None = None
+    try:
+        first_simulation = run_test_spec(baseline.control_ir, baseline.test_spec, {}, 100)
+        second_simulation = run_test_spec(baseline.control_ir, baseline.test_spec, {}, 100)
+    except (SimulationInputError, ValueError) as exc:
+        simulation_error = exc
+        first_simulation = {
+            "engine_version": "unknown",
+            "status": "failed",
+            "test_summary": {"total": 0, "passed": 0, "failed": 0, "blocked": 0},
+            "traces": [],
+        }
+        second_simulation = first_simulation
     simulation_repeatable = (
-        stable_json(first_simulation) == stable_json(second_simulation)
+        simulation_error is None
+        and stable_json(first_simulation) == stable_json(second_simulation)
         and first_simulation.get("status") == "passed"
     )
     checks.append(
@@ -308,7 +320,7 @@ def run_automated_review(
             simulation_repeatable,
             "相同 Control IR、TestSpec 和输入产生相同且通过的 Trace 与用例结果。"
             if simulation_repeatable
-            else "参考执行器结果未通过，或重复结果不一致。",
+            else f"参考执行器执行失败：{simulation_error}" if simulation_error else "参考执行器结果未通过，或重复结果不一致。",
             evidence={
                 "engine_version": first_simulation.get("engine_version"),
                 "result_status": first_simulation.get("status"),

@@ -275,12 +275,58 @@ export type SimulationRun = {
   engine_version: string;
   status: string;
   verification_level: string;
-  results: Record<string, unknown>;
+  results: SimulationResults;
   trace_artifact_id?: string | null;
   revision: number;
   trace_count: number;
   created_at: string;
   updated_at: string;
+};
+
+export type SimulationScalar = boolean | number;
+export type SimulationTestSummary = { total: number; passed: number; failed: number; blocked: number };
+export type SimulationResults = {
+  status?: string;
+  cycles?: number;
+  final_step_id?: string | null;
+  events?: string[];
+  diagnostics?: SimulationDiagnostic[];
+  test_summary?: SimulationTestSummary;
+  [key: string]: unknown;
+};
+export type SimulationScenario = {
+  input_schedule: Record<string, Record<string, SimulationScalar>>;
+  restart_cycles: number[];
+  disconnect_cycles: number[];
+  cycle_time_ms: number;
+};
+export type SimulationDiagnostic = {
+  code: string;
+  severity?: string;
+  cycle?: number;
+  step_id?: string | null;
+  timeout_cycles?: number;
+  action?: string;
+  detail?: string;
+  internal_states?: string[];
+};
+export type SimulationTrace = {
+  cycle: number;
+  step_id?: string | null;
+  inputs: Record<string, SimulationScalar>;
+  outputs: Record<string, SimulationScalar>;
+  events: string[];
+  entry_condition?: string | null;
+  completion_condition?: string | null;
+  source?: Record<string, unknown> | null;
+  communication?: "connected" | "disconnected" | string;
+  internal_state?: Record<string, SimulationScalar>;
+};
+export type SimulationTraceResponse = {
+  simulation_run_id: string;
+  engine_version: string;
+  verification_level: string;
+  traces: SimulationTrace[];
 };
 
 export type ReleaseCandidate = {

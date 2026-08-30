@@ -182,16 +182,25 @@ def _render_program(ir: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
 
 
 def _build_test_spec(ir: dict[str, Any]) -> dict[str, Any]:
+    external_inputs = {
+        str(signal.get("name"))
+        for signal in ir.get("signals", [])
+        if signal.get("name") and str(signal.get("direction") or "").upper() in {"DI", "AI", "COMM"}
+    }
+
+    def inputs_for(*expressions: str | None) -> dict[str, bool | int | float]:
+        values: dict[str, bool | int | float] = {}
+        for expression in expressions:
+            values.update(_satisfying_inputs(expression))
+        return {name: value for name, value in values.items() if name in external_inputs}
+
     tests = []
     for step in ir["steps"]:
         tests.append(
             {
                 "id": f"TEST_{step['id']}",
                 "source_step_id": step["id"],
-                "inputs": {
-                    **_satisfying_inputs(step["entry_condition"]),
-                    **_satisfying_inputs(step["completion_condition"]),
-                },
+                "inputs": inputs_for(step["entry_condition"], step["completion_condition"]),
                 "given": step["entry_condition"],
                 "when": step["actions"],
                 "expect": step["completion_condition"],
@@ -202,7 +211,7 @@ def _build_test_spec(ir: dict[str, Any]) -> dict[str, Any]:
             {
                 "id": f"TEST_{exception['exception_id']}",
                 "source_exception_id": exception["exception_id"],
-                "inputs": _satisfying_inputs(exception.get("condition")),
+                "inputs": inputs_for(exception.get("condition")),
                 "given": exception.get("condition"),
                 "when": "",
                 "expect": exception.get("condition"),

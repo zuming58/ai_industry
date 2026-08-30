@@ -98,9 +98,15 @@ class CompileRunRequest(BaseModel):
 
 
 class SimulationRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     generation_run_id: str
     input_overrides: dict[str, bool | int | float] = Field(default_factory=dict)
+    input_schedule: dict[str, dict[str, bool | int | float]] = Field(default_factory=dict, max_length=200)
+    restart_cycles: list[int] = Field(default_factory=list, max_length=200)
+    disconnect_cycles: list[int] = Field(default_factory=list, max_length=200)
     max_cycles: int = Field(default=100, ge=1, le=10_000)
+    cycle_time_ms: int = Field(default=100, ge=1, le=60_000)
     expected_generation_revision: int = Field(ge=1)
 
 

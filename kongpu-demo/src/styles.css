@@ -822,8 +822,12 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
 .verification-toolbar { min-height: 62px; padding: 9px 12px; display: grid; grid-template-columns: minmax(220px,1.25fr) minmax(200px,1fr) auto; align-items: end; gap: 10px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-sm); }
 .verification-toolbar label, .project-select { min-width: 0; display: flex; flex-direction: column; gap: 5px; color: var(--ink-500); font-size: 8px; font-weight: 650; }
 .verification-toolbar select, .verification-toolbar input, .project-select select { width: 100%; height: 34px; padding: 0 9px; color: var(--ink-900); background: #fff; border: 1px solid var(--line-strong); border-radius: 6px; font-size: 9px; }
-.verification-toolbar--simulation { grid-template-columns: minmax(190px,1.1fr) 130px minmax(230px,1.2fr) auto; }
+.verification-toolbar--simulation { grid-template-columns: minmax(190px,1.1fr) 130px 130px auto; }
 .verification-toolbar .override-field input { font-family: Consolas, monospace; }
+.simulation-scenario-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px 12px; padding: 10px 12px; background: #f7fafc; border: 1px solid var(--line); border-radius: 8px; }
+.simulation-scenario-grid label { min-width: 0; display: grid; gap: 5px; color: var(--ink-500); font-size: 8px; font-weight: 650; }
+.simulation-scenario-grid input, .simulation-scenario-grid textarea { width: 100%; min-width: 0; padding: 8px 9px; color: var(--ink-900); background: #fff; border: 1px solid var(--line-strong); border-radius: 6px; font-family: Consolas, monospace; font-size: 9px; resize: vertical; }
+.simulation-scenario-grid textarea { min-height: 58px; }
 .verification-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 310px; gap: 12px; }
 .verification-panel, .compile-prep, .simulation-stage-real, .assertion-panel-real { min-width: 0; min-height: 0; overflow: auto; }
 .audit-summary, .simulation-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-bottom: 1px solid var(--line); }
@@ -856,6 +860,11 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
 .compile-record .button { width: 100%; margin-top: 8px; }
 .compile-record > small { display: block; margin-top: 8px; color: var(--ink-500); font-size: 7px; line-height: 1.5; }
 .simulation-workbench { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 310px; gap: 12px; }
+.simulation-diagnostics { display: grid; gap: 7px; margin: 12px 0; }
+.simulation-diagnostics article { padding: 8px 9px; background: #fff7ed; border: 1px solid #ecd9bd; border-radius: 6px; }
+.simulation-diagnostics strong, .simulation-diagnostics small, .simulation-diagnostics p { display: block; }
+.simulation-diagnostics small { margin-top: 2px; color: #8b6a3b; font-family: Consolas, monospace; font-size: 7px; }
+.simulation-diagnostics p { margin: 5px 0 0; color: var(--ink-700); font-size: 8px; line-height: 1.45; }
 .release-toolbar { grid-template-columns: minmax(260px,1fr) auto; }
 .release-workbench { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 12px; min-height: 0; }
 .release-readiness, .release-gates, .monitoring-input, .evidence-list { min-width: 0; overflow: auto; }

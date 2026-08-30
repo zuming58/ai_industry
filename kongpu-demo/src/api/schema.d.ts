@@ -1229,11 +1229,26 @@ export interface components {
             input_overrides?: {
                 [key: string]: boolean | number;
             };
+            /** Input Schedule */
+            input_schedule?: {
+                [key: string]: {
+                    [key: string]: boolean | number;
+                };
+            };
+            /** Restart Cycles */
+            restart_cycles?: number[];
+            /** Disconnect Cycles */
+            disconnect_cycles?: number[];
             /**
              * Max Cycles
              * @default 100
              */
             max_cycles: number;
+            /**
+             * Cycle Time Ms
+             * @default 100
+             */
+            cycle_time_ms: number;
             /** Expected Generation Revision */
             expected_generation_revision: number;
         };

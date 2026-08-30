@@ -28,6 +28,8 @@ import type {
   TemplateVersionHistory,
   CompatibilityMatrix,
   SettingsAuditEvent,
+  SimulationScenario,
+  SimulationTraceResponse,
 } from "../domain";
 
 export const apiClient = createClient<paths>({ baseUrl: "" });
@@ -228,10 +230,10 @@ export const api = {
   async listSimulationRuns(projectId: string): Promise<SimulationRun[]> {
     return ensure(await apiClient.GET("/api/v1/projects/{project_id}/simulation-runs", { params: { path: { project_id: projectId } } }));
   },
-  async createSimulationRun(projectId: string, generationRunId: string, inputOverrides: Record<string, boolean | number>, maxCycles: number, expectedGenerationRevision: number): Promise<SimulationRun> {
-    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/simulation-runs", { params: { path: { project_id: projectId } }, body: { generation_run_id: generationRunId, input_overrides: inputOverrides, max_cycles: maxCycles, expected_generation_revision: expectedGenerationRevision } }));
+  async createSimulationRun(projectId: string, generationRunId: string, inputOverrides: Record<string, boolean | number>, maxCycles: number, expectedGenerationRevision: number, scenario: SimulationScenario = { input_schedule: {}, restart_cycles: [], disconnect_cycles: [], cycle_time_ms: 100 }): Promise<SimulationRun> {
+    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/simulation-runs", { params: { path: { project_id: projectId } }, body: { generation_run_id: generationRunId, input_overrides: inputOverrides, max_cycles: maxCycles, expected_generation_revision: expectedGenerationRevision, ...scenario } }));
   },
-  async getSimulationTrace(runId: string): Promise<{ simulation_run_id: string; engine_version: string; verification_level: string; traces: Array<Record<string, unknown>> }> {
+  async getSimulationTrace(runId: string): Promise<SimulationTraceResponse> {
     return ensure(await apiClient.GET("/api/v1/simulation-runs/{run_id}/trace", { params: { path: { run_id: runId } } }));
   },
   async listReleaseCandidates(projectId: string): Promise<ReleaseCandidate[]> {

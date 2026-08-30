@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
+import json
+import math
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from kongpu_api.audit import audit_bundle
 from kongpu_api.adapters import CAPABILITIES, adapter
+from kongpu_api.automated_review import run_automated_review
 from kongpu_api.generator import generate_bundle
 from kongpu_api.models import GenerationRun
 from kongpu_api.simulation import run_reference_simulation, run_test_spec, SimulationInputError
@@ -241,7 +246,7 @@ def test_audit_detects_loop_target_and_missing_interlock_coverage(locked_example
 
 def test_reference_simulation_success_timeout_and_unknown_input() -> None:
     ir = {
-        "signals": [{"name": "Start"}],
+        "signals": [{"name": "Start", "direction": "DI"}],
         "steps": [
             {"id": "S1", "completion_condition": "Start", "actions": "", "next_step_id": "S2"},
             {"id": "S2", "completion_condition": "TRUE", "actions": "", "next_step_id": "END"},
@@ -261,7 +266,7 @@ def test_reference_simulation_success_timeout_and_unknown_input() -> None:
 
 def test_restricted_test_spec_reports_cases_and_rejects_unknown_fields() -> None:
     ir = {
-        "signals": [{"name": "Start"}, {"name": "Done"}],
+        "signals": [{"name": "Start", "direction": "DI"}, {"name": "Done", "direction": "DO"}],
         "steps": [{"id": "S1", "completion_condition": "Start", "actions": "Done := TRUE", "next_step_id": "END", "source": {"sheet": "Sequence", "row": 2}}],
         "exceptions": [],
     }
@@ -286,15 +291,206 @@ def test_generated_testspec_uses_deterministic_inputs(locked_example: dict) -> N
     assert result["test_summary"]["blocked"] == 0
 
 
+def test_reference_simulation_scheduled_inputs_timeout_and_trace_boundaries() -> None:
+    ir = {
+        "signals": [
+            {"id": "SIG_START", "name": "Start", "direction": "DI"},
+            {"id": "SIG_FEEDBACK", "name": "Feedback", "direction": "DI"},
+            {"id": "SIG_COMMAND", "name": "Command", "direction": "DO"},
+        ],
+        "steps": [{
+            "id": "S1",
+            "entry_condition": "Start",
+            "completion_condition": "Feedback",
+            "actions": "Command := TRUE",
+            "next_step_id": "END",
+            "duration": 200,
+            "duration_unit": "ms",
+            "source": {"sheet": "Sequence", "row": 2},
+        }],
+        "interlocks": [],
+    }
+    completed = run_reference_simulation(
+        ir,
+        {"Start": True},
+        3,
+        input_schedule={2: {"Feedback": True}},
+        cycle_time_ms=100,
+    )
+    assert completed["status"] == "passed"
+    assert completed["cycles"] == 2
+    assert completed["traces"][0]["inputs"] == {"Feedback": False, "Start": True}
+    assert completed["traces"][0]["outputs"] == {"Command": True}
+    assert completed["traces"][0]["source"] == {"sheet": "Sequence", "row": 2}
+
+    timed_out = run_reference_simulation(
+        ir, {"Start": True}, 2, cycle_time_ms=100
+    )
+    timeout = next(item for item in timed_out["diagnostics"] if item["code"] == "STEP_TIMEOUT")
+    assert timeout["cycle"] == 2
+    assert timeout["timeout_cycles"] == 2
+    assert timeout["severity"] == "blocker"
+
+
+def test_reference_simulation_interlocks_restart_disconnect_and_reset_edges() -> None:
+    interlocked_ir = {
+        "signals": [
+            {"id": "SIG_PERMIT", "name": "Permit", "direction": "DI"},
+            {"id": "SIG_COMMAND", "name": "Command", "direction": "DO"},
+        ],
+        "steps": [{"id": "S1", "entry_condition": "TRUE", "completion_condition": "Command", "actions": "Command := TRUE", "next_step_id": "END"}],
+        "interlocks": [{"interlock_id": "ILK1", "action_id": "SIG_COMMAND", "allow_condition": "SIG_PERMIT", "inhibit_condition": "AxisMoving"}],
+    }
+    blocked = run_reference_simulation(interlocked_ir, {"Permit": False}, 1)
+    assert "INTERLOCK_BLOCKED:ILK1" in blocked["traces"][0]["events"]
+    assert blocked["traces"][0]["inputs"] == {"Permit": False}
+    assert blocked["traces"][0]["internal_state"] == {"AxisMoving": False}
+    assert any(item["code"] == "INTERLOCK_INTERNAL_STATE_DEFAULTED" for item in blocked["diagnostics"])
+    with pytest.raises(SimulationInputError, match="未知输入"):
+        run_reference_simulation(interlocked_ir, {"AxisMoving": True}, 1)
+
+    communication_ir = {
+        "signals": [
+            {"id": "SIG_READY", "name": "Ready", "direction": "COMM"},
+            {"id": "SIG_RESET", "name": "Reset", "direction": "DI"},
+        ],
+        "steps": [
+            {"id": "S1", "entry_condition": "TRUE", "completion_condition": "Ready", "actions": "", "next_step_id": "S2"},
+            {"id": "S2", "entry_condition": "TRUE", "completion_condition": "TRUE", "actions": "", "next_step_id": "END"},
+        ],
+        "interlocks": [],
+    }
+    recovered = run_reference_simulation(communication_ir, {"Ready": True}, 3, disconnect_cycles=[1])
+    assert recovered["status"] == "passed"
+    assert recovered["traces"][0]["communication"] == "disconnected"
+    assert recovered["traces"][1]["communication"] == "connected"
+    restarted = run_reference_simulation(communication_ir, {"Ready": True}, 4, restart_cycles=[2])
+    assert restarted["status"] == "passed"
+    assert "RESTART_APPLIED" in restarted["traces"][1]["events"]
+    reset_once = run_reference_simulation(communication_ir, {"Ready": True}, 4, input_schedule={1: {"Reset": True}})
+    assert sum("RESET_TRIGGERED" in trace["events"] for trace in reset_once["traces"]) == 1
+    with pytest.raises(SimulationInputError, match="同时重启和断开通信"):
+        run_reference_simulation(communication_ir, {"Ready": True}, 3, restart_cycles=[2], disconnect_cycles=[2])
+
+
+def test_reference_simulation_rejects_malformed_dsl_and_non_finite_values() -> None:
+    ir = {
+        "signals": [{"name": "Known", "direction": "DI"}],
+        "steps": [{"id": "S1", "entry_condition": "TRUE", "completion_condition": "Known", "actions": "", "next_step_id": "END"}],
+        "interlocks": [],
+    }
+    with pytest.raises(SimulationInputError, match="有限数值"):
+        run_reference_simulation(ir, {"Known": math.nan}, 1)
+    with pytest.raises(SimulationInputError, match="未知输入"):
+        run_reference_simulation(ir, {}, 2, input_schedule={1: {"Missing": True}})
+
+    direction_ir = {
+        "signals": [
+            {"name": "Input", "direction": "DI"},
+            {"name": "Output", "direction": "DO"},
+        ],
+        "steps": [{"id": "S1", "entry_condition": "TRUE", "completion_condition": "TRUE", "actions": "Output := TRUE", "next_step_id": "END"}],
+        "interlocks": [],
+    }
+    with pytest.raises(SimulationInputError, match="不可作为外部输入"):
+        run_reference_simulation(direction_ir, {"Output": True}, 1)
+    invalid_action = deepcopy(direction_ir)
+    invalid_action["steps"][0]["actions"] = "Input := TRUE"
+    with pytest.raises(SimulationInputError, match="动作目标"):
+        run_reference_simulation(invalid_action, {"Input": True}, 1)
+    with pytest.raises(SimulationInputError, match="周期重复"):
+        run_reference_simulation(ir, {}, 2, input_schedule={"1": {"Known": True}, "01": {"Known": False}})
+
+    unknown_action = deepcopy(ir)
+    unknown_action["steps"][0]["actions"] = "Missing := TRUE"
+    with pytest.raises(SimulationInputError, match="动作目标"):
+        run_reference_simulation(unknown_action, {"Known": True}, 1)
+    malicious = deepcopy(ir)
+    malicious["steps"][0]["completion_condition"] = "__import__('os')"
+    with pytest.raises(SimulationInputError, match="不支持的语法"):
+        run_reference_simulation(malicious, {}, 1)
+
+
+def test_generation_audit_checks_artifact_integrity_trace_and_internal_state(locked_example: dict) -> None:
+    spec = locked_example["revision"]["data"]
+    bundle = generate_bundle(spec)
+    baseline = audit_bundle(spec, bundle)
+    baseline_codes = {item["code"] for item in baseline["findings"]}
+    assert baseline["status"] == "review_ready"
+    assert "INTERLOCK_INTERNAL_STATE_UNDECLARED" in baseline_codes
+
+    missing_file = deepcopy(bundle)
+    del missing_file.files["README.md"]
+    assert "GENERATED_FILE_MISSING" in {item["code"] for item in audit_bundle(spec, missing_file)["findings"]}
+
+    invalid_json = deepcopy(bundle)
+    invalid_json.files["generated/ControlIR.json"] = "{not-json"
+    assert "CONTROL_IR_JSON_INVALID" in {item["code"] for item in audit_bundle(spec, invalid_json)["findings"]}
+
+    missing_trace = deepcopy(bundle)
+    removed = missing_trace.trace_links.pop(0)
+    report = audit_bundle(spec, missing_trace)
+    assert any(item["code"] == "TRACE_LINK_MISSING" and item["entity_id"] == removed["entity_id"] for item in report["findings"])
+
+    missing_source = deepcopy(bundle)
+    missing_source.trace_links[0]["source_sheet"] = None
+    assert "TRACE_SOURCE_MISSING" in {item["code"] for item in audit_bundle(spec, missing_source)["findings"]}
+
+    invalid_test_input = deepcopy(bundle)
+    output_name = next(item["name"] for item in invalid_test_input.control_ir["signals"] if item.get("direction") == "DO")
+    invalid_test_input.test_spec["tests"][0]["inputs"][output_name] = True
+    invalid_test_input.files["tests/TestSpec.json"] = json.dumps(invalid_test_input.test_spec, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    assert "TEST_INPUT_DIRECTION_INVALID" in {item["code"] for item in audit_bundle(spec, invalid_test_input)["findings"]}
+
+    invalid_action_direction = deepcopy(bundle)
+    input_name = next(item["name"] for item in invalid_action_direction.control_ir["signals"] if item.get("direction") == "DI")
+    invalid_action_direction.control_ir["steps"][0]["actions"] = f"{input_name} := TRUE"
+    assert "ACTION_TARGET_DIRECTION_INVALID" in {item["code"] for item in audit_bundle(spec, invalid_action_direction)["findings"]}
+
+
+def test_automated_review_keeps_all_checks_when_reference_executor_fails(locked_example: dict) -> None:
+    spec = locked_example["revision"]["data"]
+    bundle = generate_bundle(spec)
+    bundle.test_spec["tests"][0]["given"] = "UNKNOWN_TEST_SIGNAL"
+    bundle.files["tests/TestSpec.json"] = json.dumps(bundle.test_spec, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    report = run_automated_review(
+        spec,
+        bundle,
+        run_generator_version=bundle.control_ir["generator_version"],
+        program_commit_id="commit-id",
+        program_git_sha="0" * 40,
+        repeat_count=2,
+    )
+    assert report["status"] == "blocked"
+    assert len(report["checks"]) == 7
+    checks = {item["id"]: item for item in report["checks"]}
+    assert checks["deterministic_generation"]["status"] == "passed"
+    assert checks["reference_executor_determinism"]["status"] == "failed"
+
+
 def test_reference_simulation_api_trace_and_evidence_immutability(
     client: TestClient, project: dict, locked_example: dict
 ) -> None:
     run = _generated_run(client, project, locked_example)
     audited = client.post(f"/api/v1/generation-runs/{run['id']}/audit")
     assert audited.status_code == 200
+    invalid = client.post(
+        f"/api/v1/projects/{project['id']}/simulation-runs",
+        json={"generation_run_id": run["id"], "input_overrides": {}, "max_cycles": 10, "expected_generation_revision": run["revision"], "unknown_field": True},
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["code"] == "REQUEST_VALIDATION_FAILED"
+
+    conflict = client.post(
+        f"/api/v1/projects/{project['id']}/simulation-runs",
+        json={"generation_run_id": run["id"], "input_overrides": {}, "max_cycles": 10, "restart_cycles": [2], "disconnect_cycles": [2], "expected_generation_revision": run["revision"]},
+    )
+    assert conflict.status_code == 422
+    assert conflict.json()["code"] == "SIMULATION_INPUT_INVALID"
+
     simulation = client.post(
         f"/api/v1/projects/{project['id']}/simulation-runs",
-        json={"generation_run_id": run["id"], "input_overrides": {}, "max_cycles": 10, "expected_generation_revision": run["revision"]},
+        json={"generation_run_id": run["id"], "input_overrides": {}, "input_schedule": {"1": {"SIG_TRAY_PRESENT": True}}, "restart_cycles": [], "disconnect_cycles": [], "max_cycles": 10, "cycle_time_ms": 100, "expected_generation_revision": run["revision"]},
     )
     assert simulation.status_code == 201, simulation.text
     body = simulation.json()
@@ -304,6 +500,9 @@ def test_reference_simulation_api_trace_and_evidence_immutability(
     trace = client.get(f"/api/v1/simulation-runs/{body['id']}/trace")
     assert trace.status_code == 200
     assert trace.json()["simulation_run_id"] == body["id"]
+    assert trace.json()["traces"][0]["entry_condition"]
+    assert trace.json()["traces"][0]["source"]["sheet"] == "Sequence"
+    assert trace.json()["traces"][0]["internal_state"] == {"AxisMoving": False}
 
     evidence = client.post(
         f"/api/v1/projects/{project['id']}/compile-runs",

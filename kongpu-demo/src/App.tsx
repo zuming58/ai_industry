@@ -14,6 +14,7 @@ import type {
   Project, ProjectAcceptanceRun, ReleaseCandidate, CandidateVerification,
   SimulationRun, SpecRevision, ValidationIssue, VersionComparisonSection, ProjectTimelineEvent,
   LocalSettings, TemplateVersionHistory, CompatibilityMatrix, SettingsAuditEvent,
+  SimulationDiagnostic, SimulationScalar,
 } from "./domain";
 
 const BRAND_ICON = "/assets/brand/kongpu-app-icon.png";
@@ -495,19 +496,59 @@ function CompilePage() {
 function StatusCheck({ status }: { status: AutomatedReviewRun["checks"][number]["status"] }) { return status === "passed" ? <CheckCircle size={18} weight="fill" color="#2f765e" /> : <WarningCircle size={18} weight="fill" color="#a44b45" />; }
 
 function SimulationPage() {
-  const queryClient = useQueryClient(); const { projectId } = useProjectContext(); const runs = useQuery({ queryKey: ["runs", projectId], queryFn: () => api.listRuns(projectId) });
+  const queryClient = useQueryClient();
+  const { projectId } = useProjectContext();
+  const runs = useQuery({ queryKey: ["runs", projectId], queryFn: () => api.listRuns(projectId) });
   const reviews = useQuery({ queryKey: ["automated-reviews", projectId], queryFn: () => api.listAutomatedReviews(projectId) });
   const simulationRuns = useQuery({ queryKey: ["simulation-runs", projectId], queryFn: () => api.listSimulationRuns(projectId) });
-  const [runId, setRunId] = useState(""); const selectedRunId = runId || runs.data?.[0]?.id || ""; const [maxCycles, setMaxCycles] = useState(100); const [overrides, setOverrides] = useState("{}"); const [simulation, setSimulation] = useState<SimulationRun | null>(null); const [busy, setBusy] = useState(false);
+  const [runId, setRunId] = useState("");
+  const selectedRunId = runId || runs.data?.[0]?.id || "";
+  const [maxCycles, setMaxCycles] = useState(100);
+  const [cycleTimeMs, setCycleTimeMs] = useState(100);
+  const [overrides, setOverrides] = useState("{}");
+  const [schedule, setSchedule] = useState("{}");
+  const [restartCycles, setRestartCycles] = useState("");
+  const [disconnectCycles, setDisconnectCycles] = useState("");
+  const [simulation, setSimulation] = useState<SimulationRun | null>(null);
+  const [busy, setBusy] = useState(false);
   const currentReview = reviews.data?.find((item) => item.generation_run_id === selectedRunId);
   const persistedSimulation = simulationRuns.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === currentReview?.program_commit_id) || null;
   const activeSimulation = simulation || persistedSimulation;
   const trace = useQuery({ queryKey: ["simulation-trace", activeSimulation?.id], queryFn: () => api.getSimulationTrace(activeSimulation!.id), enabled: Boolean(activeSimulation?.id) });
-  const runSimulation = async () => { if (!selectedRunId) return; const selectedRun = runs.data?.find((item) => item.id === selectedRunId); if (!selectedRun) return; setBusy(true); try { const parsed = JSON.parse(overrides) as Record<string, boolean | number>; const result = await api.createSimulationRun(projectId, selectedRunId, parsed, maxCycles, selectedRun.revision); setSimulation(result); await queryClient.invalidateQueries({ queryKey: ["simulation-runs", projectId] }); notify("控谱参考逻辑模拟已完成；不等同于 GX Simulator3"); } catch (error) { notifyError(error); } finally { setBusy(false); } };
-  const results = activeSimulation?.results || {}; const traces = trace.data?.traces || []; const lastTrace = traces[traces.length - 1];
+  const parseCycles = (value: string) => value.trim() ? value.split(",").map((item) => Number(item.trim())) : [];
+  const runSimulation = async () => {
+    if (!selectedRunId) return;
+    const selectedRun = runs.data?.find((item) => item.id === selectedRunId);
+    if (!selectedRun) return;
+    setBusy(true);
+    try {
+      const inputOverrides = JSON.parse(overrides) as Record<string, SimulationScalar>;
+      const inputSchedule = JSON.parse(schedule) as Record<string, Record<string, SimulationScalar>>;
+      const result = await api.createSimulationRun(projectId, selectedRunId, inputOverrides, maxCycles, selectedRun.revision, {
+        input_schedule: inputSchedule,
+        restart_cycles: parseCycles(restartCycles),
+        disconnect_cycles: parseCycles(disconnectCycles),
+        cycle_time_ms: cycleTimeMs,
+      });
+      setSimulation(result);
+      await queryClient.invalidateQueries({ queryKey: ["simulation-runs", projectId] });
+      notify("控谱参考逻辑模拟已完成；不等同于 GX Simulator3");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const results = activeSimulation?.results || {};
+  const diagnostics = results.diagnostics || [];
+  const traces = trace.data?.traces || [];
+  const lastTrace = traces[traces.length - 1];
   return <ProjectPage kicker="P08 · REFERENCE SIMULATION" title="控谱参考逻辑模拟" description="受限 TestSpec/Control IR 离散扫描执行器；不是 GX Simulator3，也不是硬件实测。">
-    {!runs.data?.length ? <EmptyState title="尚无可模拟生成物" text="先在 P06 生成 Control IR 与 TestSpec。" /> : <><div className="verification-toolbar verification-toolbar--simulation"><label>生成任务<select value={selectedRunId} onChange={(event) => setRunId(event.target.value)}>{runs.data.map((run: GenerationRun) => <option key={run.id} value={run.id}>{run.generator_version} · {formatTime(run.created_at)}</option>)}</select></label><label>最大扫描周期<input type="number" min={1} max={10000} value={maxCycles} onChange={(event) => setMaxCycles(Number(event.target.value))} /></label><label className="override-field">输入覆盖（JSON）<input value={overrides} onChange={(event) => setOverrides(event.target.value)} spellCheck={false} /></label><button className="button button--primary" disabled={busy} onClick={runSimulation}><Pulse size={16} />{busy ? "运行中…" : "运行参考模拟"}</button></div>
-    <div className="simulation-workbench"><section className="panel simulation-stage-real"><div className="panel__header"><div><h3>离散扫描结果</h3><p>{activeSimulation?.engine_version || "kongpu-reference-v1"}</p></div><Status value={activeSimulation?.status || "尚未运行"} /></div>{activeSimulation ? <><div className="reference-banner"><Info size={20} /><span><strong>{activeSimulation.verification_level}</strong>仅代表控谱参考逻辑模拟的自动验证结果。</span></div><div className="simulation-metrics"><Metric label="扫描周期" value={String(results.cycles ?? activeSimulation.trace_count)} note="离散逻辑周期" icon={<Pulse />} /><Metric label="最终工步" value={String(results.final_step_id ?? "END")} note="Control IR 工步" icon={<ListChecks />} /><Metric label="Trace" value={String(activeSimulation.trace_count)} note="不可变证据工件" icon={<FileText />} /></div><div className="trace-stream">{traces.slice(-30).map((item, index) => <article key={String(item.cycle || index)}><b>{String(item.cycle || index + 1)}</b><span><strong>{String(item.step_id || "END")}</strong><small>{JSON.stringify(item.events || [])}</small></span><code>{JSON.stringify(item.outputs || {})}</code></article>)}</div></> : <EmptyState title="等待参考模拟" text="默认输入均为 false；可用 JSON 覆盖已知 Control IR 信号。" />}</section><aside className="panel assertion-panel-real"><div className="panel__header"><div><h3>结果与边界</h3><p>失败可定位，不继承旧结果</p></div></div>{activeSimulation ? <><Gate label="执行状态" value={activeSimulation.status === "review_ready" ? 0 : 1} /><dl><dt>验证等级</dt><dd>{activeSimulation.verification_level}</dd><dt>程序 Commit</dt><dd>{activeSimulation.program_commit_id?.slice(0, 12) || "-"}</dd><dt>TestSpec</dt><dd>{activeSimulation.test_spec_revision_id?.slice(0, 12) || "-"}</dd><dt>最后输入</dt><dd><code>{JSON.stringify(lastTrace?.inputs || {})}</code></dd><dt>事件</dt><dd>{JSON.stringify(results.events || [])}</dd></dl>{(results.test_summary as { total?: number; passed?: number; failed?: number; blocked?: number } | undefined) && <p>TestSpec 用例：{String((results.test_summary as { total?: number }).total || 0)} 总计，{String((results.test_summary as { passed?: number }).passed || 0)} 通过，{String((results.test_summary as { failed?: number }).failed || 0)} 失败，{String((results.test_summary as { blocked?: number }).blocked || 0)} 阻断。</p>}</> : <p>新 Commit、不同 TestSpec 或不同引擎版本必须重新运行。</p>}<div className="boundary-card"><WarningCircle size={21} /><span><strong>厂商与硬件未验证</strong>结果不能用于声明程序可下载、可生产或安全确认。</span></div></aside></div></>}
+    {!runs.data?.length ? <EmptyState title="尚无可模拟生成物" text="先在 P06 生成 Control IR 与 TestSpec。" /> : <>
+      <div className="verification-toolbar verification-toolbar--simulation"><label>生成任务<select value={selectedRunId} onChange={(event) => { setRunId(event.target.value); setSimulation(null); }}>{runs.data.map((run: GenerationRun) => <option key={run.id} value={run.id}>{run.generator_version} · {formatTime(run.created_at)}</option>)}</select></label><label>最大扫描周期<input type="number" min={1} max={10000} value={maxCycles} onChange={(event) => setMaxCycles(Number(event.target.value))} /></label><label>扫描周期 ms<input type="number" min={1} max={60000} value={cycleTimeMs} onChange={(event) => setCycleTimeMs(Number(event.target.value))} /></label><button className="button button--primary" disabled={busy} onClick={runSimulation}><Pulse size={16} />{busy ? "运行中…" : "运行参考模拟"}</button></div>
+      <div className="simulation-scenario-grid"><label>初始输入（JSON）<textarea value={overrides} onChange={(event) => setOverrides(event.target.value)} spellCheck={false} /></label><label>周期注入（JSON）<textarea value={schedule} onChange={(event) => setSchedule(event.target.value)} placeholder={'{"3":{"Start":true}}'} spellCheck={false} /></label><label>重启周期（逗号分隔）<input value={restartCycles} onChange={(event) => setRestartCycles(event.target.value)} placeholder="例如 10,25" /></label><label>通信断开周期（逗号分隔）<input value={disconnectCycles} onChange={(event) => setDisconnectCycles(event.target.value)} placeholder="例如 15,16" /></label></div>
+      <div className="simulation-workbench"><section className="panel simulation-stage-real"><div className="panel__header"><div><h3>离散扫描结果</h3><p>{activeSimulation?.engine_version || "kongpu-reference-v1"}</p></div><Status value={activeSimulation?.status || "尚未运行"} /></div>{activeSimulation ? <><div className="reference-banner"><Info size={20} /><span><strong>{activeSimulation.verification_level}</strong>仅代表控谱参考逻辑模拟的自动验证结果。</span></div><div className="simulation-metrics"><Metric label="扫描周期" value={String(results.cycles ?? activeSimulation.trace_count)} note={cycleTimeMs + " ms 离散周期"} icon={<Pulse />} /><Metric label="最终工步" value={String(results.final_step_id ?? "END")} note="Control IR 工步" icon={<ListChecks />} /><Metric label="诊断" value={String(diagnostics.length)} note="可定位恢复动作" icon={<WarningCircle />} /></div><div className="trace-stream">{traces.slice(-30).map((item) => <article key={item.cycle}><b>{item.cycle}</b><span><strong>{item.step_id || "END"}</strong><small>{item.communication} · {JSON.stringify(item.events)}</small><small>{item.entry_condition || "TRUE"} → {item.completion_condition || "TRUE"}</small></span><code>{JSON.stringify(item.outputs)}</code></article>)}</div></> : <EmptyState title="等待参考模拟" text="默认输入均为 false；可按周期注入输入、重启或模拟通信断开。" />}</section><aside className="panel assertion-panel-real"><div className="panel__header"><div><h3>诊断与边界</h3><p>失败可定位，不继承旧结果</p></div></div>{activeSimulation ? <><Gate label="执行状态" value={activeSimulation.status === "review_ready" ? 0 : 1} /><dl><dt>验证等级</dt><dd>{activeSimulation.verification_level}</dd><dt>程序 Commit</dt><dd>{activeSimulation.program_commit_id?.slice(0, 12) || "-"}</dd><dt>TestSpec</dt><dd>{activeSimulation.test_spec_revision_id?.slice(0, 12) || "-"}</dd><dt>最后输入</dt><dd><code>{JSON.stringify(lastTrace?.inputs || {})}</code></dd><dt>内部状态（只读）</dt><dd><code>{JSON.stringify(lastTrace?.internal_state || {})}</code></dd><dt>来源</dt><dd><code>{JSON.stringify(lastTrace?.source || {})}</code></dd><dt>事件</dt><dd>{JSON.stringify(results.events || [])}</dd></dl>{results.test_summary && <p>TestSpec 用例：{results.test_summary.total} 总计，{results.test_summary.passed} 通过，{results.test_summary.failed} 失败，{results.test_summary.blocked} 阻断。</p>}<div className="simulation-diagnostics">{diagnostics.map((item: SimulationDiagnostic, index) => <article key={item.code + "-" + String(item.cycle || index)}><strong>{item.code}</strong><small>周期 {item.cycle ?? "-"} · 工步 {item.step_id || "-"}</small><p>{item.action || item.detail || "检查 Trace 和源资料。"}</p></article>)}</div></> : <p>新 Commit、不同 TestSpec 或不同引擎版本必须重新运行。</p>}<div className="boundary-card"><WarningCircle size={21} /><span><strong>厂商与硬件未验证</strong>结果不能用于声明程序可下载、可生产或安全确认。</span></div></aside></div>
+    </>}
   </ProjectPage>;
 }
 
