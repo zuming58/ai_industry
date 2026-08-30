@@ -35,7 +35,7 @@ M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”�
 
 - Adapter v1 注册表和显式契约已接入：reference 为受限参考执行器，GX Works3、AutoShop、CODESYS 为只读检测加人工降级 Adapter。
 - 环境检测只读取受控环境变量、平台和版本信息，不启动厂商程序、不执行任意命令，也不保存 PLC 写入凭据。
-- 生成物自审计 v1 读取不可变 ProgramArtifact、Control IR、TestSpec 和锁定 MachineSpec，检查符号/引用、I/O、目标、可达性、无退出循环、互锁覆盖、模式/复位路径、单位/超时、运动模板和报警 TODO。
+- 生成物自审计 v2 读取不可变 ProgramArtifact、Control IR、TestSpec 和锁定 MachineSpec；IEC/ST 标识符按不区分大小写比较，检查符号/引用、I/O、目标、可达性、无退出循环、互锁覆盖、模式/复位路径、单位/超时、运动模板和报警 TODO。
 - 每次确定性生成完成后自动创建不可变 AutomatedReviewRun。默认重复生成 20 次，并检查生成基线哈希、MachineSpec/Excel 来源覆盖、静态审计、受限参考执行器确定性、六类故意变异和 Adapter 安全边界。
 - 相同生成 Commit、审核版本、重复次数与输入哈希只复用原报告；不同次数或生成器版本会形成新报告。审核阻断会保留程序基线和报告，不覆盖 Git 历史。
 - 参考模拟使用受限 TestSpec DSL 和离散扫描周期，支持初始输入、周期输入注入、重启、通信断开/恢复、超时和复位沿场景，输出带来源、条件、通信状态、结构化诊断和只读内部状态的不可变 Trace；只有 DI/AI/COMM 可注入，动作只能写 DO/AO/INTERNAL/COMM，生成器、静态审计与执行器共同阻止方向越权。验证等级固定为 automatic_reference，不等同于 GX Simulator3。未显式建模的互锁内部状态默认只读 false、产生 warning 且不可由 API 注入。

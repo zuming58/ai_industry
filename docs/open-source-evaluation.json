@@ -1,0 +1,42 @@
+{
+  "schema_version": "kongpu-open-source-evaluation/v1",
+  "evaluated_at": "2026-08-30",
+  "integration_boundary": "Research-only isolated evaluation. No source, binary, or license file from these projects is shipped in Kongpu.",
+  "projects": [
+    {
+      "name": "IEC Checker",
+      "repository": "https://github.com/jubnzv/iec-checker",
+      "commit": "d3e5dae2c9b5096a197e4134d7d0549201f3a953",
+      "license": "LGPL-3.0",
+      "source_reviewed": true,
+      "locally_built": false,
+      "integrated": false,
+      "missing_build_tools": ["OCaml 5.1+", "opam", "dune"],
+      "scope": "Candidate isolated IEC/ST pre-check only; vendor dialects may not parse."
+    },
+    {
+      "name": "MatIEC",
+      "repository": "https://github.com/beremiz/matiec",
+      "commit": "7680ed8e7ffc1a76fa9f9620d6c6e7a3e75c088d",
+      "license": "GPL-3.0",
+      "source_reviewed": true,
+      "locally_built": false,
+      "integrated": false,
+      "missing_build_tools": ["autotools", "make", "flex", "bison", "C++ toolchain"],
+      "scope": "IEC/ST syntax reference only; no FX5U or GX Works3 compatibility claim."
+    },
+    {
+      "name": "Beremiz",
+      "repository": "https://github.com/beremiz/beremiz",
+      "commit": "3caf97e5764e845cc61a687e6979d007dc07589c",
+      "license": "IDE GPL-2.0-or-later; Python runtime LGPL-2.1-or-later; C++ runtime GPL-3.0-or-later",
+      "source_reviewed": true,
+      "locally_built": false,
+      "integrated": false,
+      "missing_build_tools": ["complete Beremiz environment", "MatIEC toolchain"],
+      "scope": "Architecture and license-boundary research only; not a Kongpu dependency or simulator."
+    }
+  ],
+  "verification_level": "research_reviewed_build_unverified",
+  "external_validation": "Run public fixtures in a separately provisioned toolchain and retain command, version, output, and hashes before any integration decision."
+}

@@ -34,6 +34,17 @@ def test_deterministic_generator(locked_example: dict) -> None:
     assert {("test_case", f"TEST_{item['step_id']}") for item in spec["sequence"]} <= traced
 
 
+def test_generator_resolves_case_insensitive_signal_and_step_references(locked_example: dict) -> None:
+    spec = locked_example["revision"]["data"]
+    first_signal = spec["signals"][0]["signal_id"]
+    next_step = spec["sequence"][1]["step_id"]
+    spec["sequence"][0]["completion_condition"] = first_signal.lower()
+    spec["sequence"][0]["next_step_id"] = next_step.lower()
+    bundle = generate_bundle(spec)
+    assert bundle.control_ir["steps"][0]["completion_condition"] == first_signal
+    assert bundle.control_ir["steps"][0]["next_step_number"] == bundle.control_ir["steps"][1]["number"]
+
+
 def test_generation_edit_commit_and_diff(
     client: TestClient,
     project: dict,

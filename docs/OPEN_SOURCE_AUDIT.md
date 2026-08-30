@@ -43,9 +43,22 @@ M3 前置的 Adapter 注册表、Manual/Reference Adapter 契约、生成物 Aud
 
 当前没有新增运行时厂商依赖。GX Works3、GX Simulator3、MX Component、AutoShop 和 CODESYS 只作为未来人工验证目标，不被本机代码自动下载、启动或控制。任何未来引入的 Adapter 或开源库必须固定 Commit、保留 LICENSE/NOTICE、重新生成并审阅 SBOM/许可证清单，并通过权限、网络、文件写入、超时和回滚审计。
 
+## 2026-08-30 隔离评估结果
+
+本机在被 Git 忽略的 `.local-data/open-source-spikes/` 中以浅克隆固定了公开仓库 HEAD，未将源码、构建产物或许可证文件复制进产品：
+
+| 项目 | 固定 Commit | 许可证 | 本机自动评估结果 | 结论 |
+|---|---|---|---|---|
+| IEC Checker | `d3e5dae2c9b5096a197e4134d7d0549201f3a953` | LGPL-3.0 | README/CLI/测试夹具已读取；要求 OCaml 5.1+、opam、dune，当前 Windows 未安装，未生成二进制 | 仅作隔离前置检查候选，不进入运行时 |
+| MatIEC | `7680ed8e7ffc1a76fa9f9620d6c6e7a3e75c088d` | GPL-3.0 | `readme`/`README.build` 已读取；要求 autoreconf、configure、make 以及 flex/bison/C++ 工具链，当前环境未具备 | 仅作 IEC/ST 语法参考，不宣称 FX5U 或 GX Works3 兼容 |
+| Beremiz | `3caf97e5764e845cc61a687e6979d007dc07589c` | IDE GPL-2.0-or-later；运行时分组件授权 | README 与分组件许可证边界已读取；完整开发环境、MatIEC 和运行时未安装 | 不作为本项目依赖或模拟器底座 |
+
+IEC Checker 的公开 README 明确其 ST 方言与 MatIEC 兼容，并提示厂商扩展可能导致解析失败；这验证了本项目必须保留自己的确定性规则和厂商验证门。MatIEC 的公开构建说明要求 Unix 风格 autotools/C++ 工具链，Beremiz 的许可证按 IDE、Python runtime、C++ runtime 分开，不能按单一许可证推断。上述评估只记录可审查事实，不把“未构建”当作通过。
+
+本机可复现检查：`git ls-remote` 固定上述 Commit；目录中没有预编译 IEC Checker/MatIEC 二进制；`opam`、`ocaml`、`dune`、`flex`、`bison`、`make` 和 `gcc` 均未发现。由于缺少构建工具，无法在本机运行第三方解析器；该限制已登记为 `pending_external`，不影响本项目自主规则和受限参考模拟器的自动门禁。机器可读的固定版本、许可证和评估边界见 `open-source-evaluation.json`。
+
 ## 后续自主审计步骤
 
-1. 为 IEC Checker 建立隔离 spike，固定版本并比较其结果与本项目规则；不通过则不集成。
-2. 使用人工构造的公开 ST 夹具评估 MatIEC/Beremiz 语法覆盖，只作为前置反馈。
-3. 对任何 Vendor Adapter 候选做源码完整性、预编译二进制、权限、网络、文件写入和回滚审计。
-4. 将适用结果转成自动化回归测试；不能自动关闭的差异进入集中厂商验证包。
+1. 在具备 OCaml/autotools 工具链的隔离环境中运行 IEC Checker 和 MatIEC 的公开 ST 夹具，并保存命令、版本和输出哈希；不通过则不集成。
+2. 对任何 Vendor Adapter 候选做源码完整性、预编译二进制、权限、网络、文件写入和回滚审计。
+3. 将适用结果转成自动化回归测试；不能自动关闭的差异进入集中厂商验证包。

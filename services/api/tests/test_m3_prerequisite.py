@@ -264,6 +264,25 @@ def test_reference_simulation_success_timeout_and_unknown_input() -> None:
         raise AssertionError("unknown inputs must be rejected")
 
 
+def test_reference_simulation_is_case_insensitive_like_iec_st() -> None:
+    ir = {
+        "signals": [
+            {"id": "SIG_START", "name": "Start", "direction": "DI"},
+            {"id": "SIG_DONE", "name": "Done", "direction": "DO"},
+        ],
+        "steps": [{
+            "id": "S1",
+            "entry_condition": "start",
+            "completion_condition": "DONE",
+            "actions": "done := TRUE",
+            "next_step_id": "end",
+        }],
+    }
+    result = run_reference_simulation(ir, {"START": True}, 2)
+    assert result["status"] == "passed"
+    assert result["traces"][0]["outputs"] == {"Done": True}
+
+
 def test_restricted_test_spec_reports_cases_and_rejects_unknown_fields() -> None:
     ir = {
         "signals": [{"name": "Start", "direction": "DI"}, {"name": "Done", "direction": "DO"}],
@@ -446,6 +465,23 @@ def test_generation_audit_checks_artifact_integrity_trace_and_internal_state(loc
     input_name = next(item["name"] for item in invalid_action_direction.control_ir["signals"] if item.get("direction") == "DI")
     invalid_action_direction.control_ir["steps"][0]["actions"] = f"{input_name} := TRUE"
     assert "ACTION_TARGET_DIRECTION_INVALID" in {item["code"] for item in audit_bundle(spec, invalid_action_direction)["findings"]}
+
+
+def test_generation_audit_treats_st_identifiers_case_insensitively(locked_example: dict) -> None:
+    spec = locked_example["revision"]["data"]
+    bundle = generate_bundle(spec)
+    signal = bundle.control_ir["signals"][0]
+    original_name = signal["name"]
+    signal["name"] = original_name.swapcase()
+    bundle.control_ir["steps"][0]["completion_condition"] = original_name.lower()
+    report = audit_bundle(spec, bundle)
+    codes = {item["code"] for item in report["findings"]}
+    assert "UNDEFINED_ST_REFERENCE" not in codes
+
+    duplicate = deepcopy(bundle)
+    duplicate.control_ir["signals"].append(dict(signal, id="SIG_CASE_DUP", name=original_name.lower()))
+    duplicate_codes = {item["code"] for item in audit_bundle(spec, duplicate)["findings"]}
+    assert "DUPLICATE_ST_SYMBOL" in duplicate_codes
 
 
 def test_automated_review_keeps_all_checks_when_reference_executor_fails(locked_example: dict) -> None:

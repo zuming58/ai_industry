@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-GENERATOR_VERSION = "fx5u-st-v2"
+GENERATOR_VERSION = "fx5u-st-v3"
 
 
 def stable_json(value: Any) -> str:
@@ -37,7 +37,7 @@ def _translate_expression(expression: str | None, signals: dict[str, str]) -> st
         return "TRUE"
     result = str(expression)
     for signal_id in sorted(signals, key=len, reverse=True):
-        result = re.sub(rf"\b{re.escape(signal_id)}\b", signals[signal_id], result)
+        result = re.sub(rf"\b{re.escape(signal_id)}\b", signals[signal_id], result, flags=re.IGNORECASE)
     return result.replace(":=", "=")
 
 
@@ -109,9 +109,9 @@ def build_control_ir(spec: dict[str, Any]) -> dict[str, Any]:
                 "source": item.get("source"),
             }
         )
-    step_numbers = {item["id"]: item["number"] for item in steps}
+    step_numbers = {str(item["id"]).casefold(): item["number"] for item in steps}
     for item in steps:
-        item["next_step_number"] = step_numbers.get(item.get("next_step_id"), 0)
+        item["next_step_number"] = step_numbers.get(str(item.get("next_step_id") or "").casefold(), 0)
     return {
         "ir_version": "1.0",
         "generator_version": GENERATOR_VERSION,

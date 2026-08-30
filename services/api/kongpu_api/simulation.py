@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 
-ENGINE_VERSION = "kongpu-reference-v1"
+ENGINE_VERSION = "kongpu-reference-v2"
 TEST_SPEC_DSL_VERSION = "1.0"
 _IDENTIFIER = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _CONDITION_WORDS = {"TRUE", "FALSE", "AND", "OR", "NOT"}
@@ -17,6 +17,46 @@ _ACTION_TARGET_DIRECTIONS = {"DO", "AO", "INTERNAL", "COMM"}
 
 class SimulationInputError(ValueError):
     pass
+
+
+def _fold_identifier(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _canonical_names(names: set[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for name in names:
+        folded = _fold_identifier(name)
+        existing = result.get(folded)
+        if existing is not None and existing != name:
+            raise SimulationInputError(f"信号名称仅大小写不同，无法确定性解析: {existing}, {name}")
+        result[folded] = name
+    return result
+
+
+def _normalize_values(
+    values: dict[str, Any],
+    known: set[str],
+    *,
+    context: str,
+) -> dict[str, Any]:
+    canonical = _canonical_names(known)
+    normalized: dict[str, Any] = {}
+    seen: set[str] = set()
+    for key, value in values.items():
+        folded = _fold_identifier(key)
+        name = canonical.get(folded)
+        if name is None:
+            raise SimulationInputError(f"{context}使用未知输入或不可作为外部输入的信号: {key}")
+        if folded in seen:
+            raise SimulationInputError(f"{context}包含仅大小写不同的重复信号: {key}")
+        if not isinstance(value, (bool, int, float)):
+            raise SimulationInputError(f"{context}输入 {key} 必须是布尔或数字")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise SimulationInputError(f"{context}输入 {key} 必须是有限数值")
+        seen.add(folded)
+        normalized[name] = value
+    return normalized
 
 
 def _condition_identifiers(expression: Any) -> set[str]:
@@ -36,7 +76,7 @@ def _interlock_internal_states(ir: dict[str, Any]) -> set[str]:
     never become user-injectable inputs.
     """
     known = {
-        str(item.get(key))
+        _fold_identifier(item.get(key))
         for item in ir.get("signals", [])
         for key in ("id", "name")
         if item.get(key)
@@ -45,7 +85,7 @@ def _interlock_internal_states(ir: dict[str, Any]) -> set[str]:
     for interlock in ir.get("interlocks", []):
         for key in ("allow_condition", "inhibit_condition"):
             for token in _condition_identifiers(interlock.get(key)):
-                if token not in known:
+                if _fold_identifier(token) not in known:
                     internal.add(token)
     return internal
 
@@ -65,6 +105,8 @@ def _safe_eval(expression: str | None, values: dict[str, Any]) -> bool:
     except SyntaxError as exc:
         raise SimulationInputError("条件表达式语法无效；仅支持信号、TRUE/FALSE、AND/OR/NOT 和比较运算") from exc
 
+    value_names = _canonical_names(set(values))
+
     def evaluate(node: ast.AST) -> Any:
         if isinstance(node, ast.Expression): return evaluate(node.body)
         if isinstance(node, ast.Constant) and isinstance(node.value, (bool, int, float)):
@@ -72,9 +114,10 @@ def _safe_eval(expression: str | None, values: dict[str, Any]) -> bool:
                 raise SimulationInputError("条件表达式不允许非有限数值")
             return node.value
         if isinstance(node, ast.Name):
-            if node.id not in values:
+            canonical = value_names.get(_fold_identifier(node.id))
+            if canonical is None:
                 raise SimulationInputError(f"条件表达式使用未知信号: {node.id}")
-            return values[node.id]
+            return values[canonical]
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not): return not bool(evaluate(node.operand))
         if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
             result = bool(evaluate(node.values[0]))
@@ -97,13 +140,16 @@ def _apply_actions(actions: str | None, values: dict[str, Any], allowed: set[str
     text = str(actions or "")
     changed: dict[str, Any] = {}
     assignment_targets = set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)", text))
+    allowed_names = _canonical_names(allowed or set(values))
     for name, raw in re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)\s*(TRUE|FALSE|[-+]?\d+(?:\.\d+)?)", text, flags=re.I):
         value: Any = raw.upper() == "TRUE" if raw.upper() in {"TRUE", "FALSE"} else float(raw) if "." in raw else int(raw)
-        if allowed is not None and name not in allowed:
+        canonical = allowed_names.get(_fold_identifier(name))
+        if canonical is None:
             raise SimulationInputError(f"动作目标不是已定义信号: {name}")
-        values[name] = value
-        changed[name] = value
-    unsupported = sorted(assignment_targets - set(changed))
+        values[canonical] = value
+        changed[canonical] = value
+    changed_folded = {_fold_identifier(name) for name in changed}
+    unsupported = sorted(name for name in assignment_targets if _fold_identifier(name) not in changed_folded)
     if unsupported:
         raise SimulationInputError(f"动作赋值仅支持布尔或数字常量: {', '.join(unsupported)}")
     return changed
@@ -129,21 +175,6 @@ def _action_targets(actions: str | None) -> set[str]:
     return set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)", str(actions or "")))
 
 
-def _validate_values(
-    values: dict[str, Any],
-    known: set[str],
-    *,
-    context: str,
-) -> None:
-    for key, value in values.items():
-        if key not in known:
-            raise SimulationInputError(f"{context}使用未知输入或不可作为外部输入的信号: {key}")
-        if not isinstance(value, (bool, int, float)):
-            raise SimulationInputError(f"{context}输入 {key} 必须是布尔或数字")
-        if isinstance(value, float) and not math.isfinite(value):
-            raise SimulationInputError(f"{context}输入 {key} 必须是有限数值")
-
-
 def _cycle_schedule(
     schedule: dict[int | str, dict[str, Any]] | None,
     known: set[str],
@@ -159,7 +190,7 @@ def _cycle_schedule(
             raise SimulationInputError("输入注入周期必须位于 1 到 max_cycles 之间")
         if not isinstance(values, dict):
             raise SimulationInputError("输入注入帧必须是对象")
-        _validate_values(values, known, context="输入注入帧")
+        values = _normalize_values(values, known, context="输入注入帧")
         if cycle in normalized:
             raise SimulationInputError(f"输入注入周期重复: {cycle}")
         normalized[cycle] = dict(values)
@@ -202,20 +233,20 @@ def _translated_condition(expression: Any, ir: dict[str, Any]) -> str:
         if item.get("id") and item.get("name")
     }
     for source, target in sorted(mapping.items(), key=lambda item: len(item[0]), reverse=True):
-        text = re.sub(rf"\b{re.escape(source)}\b", target, text)
+        text = re.sub(rf"\b{re.escape(source)}\b", target, text, flags=re.I)
     return text
 
 
 def _blocked_by_interlocks(step: dict[str, Any], ir: dict[str, Any], values: dict[str, Any]) -> list[str]:
-    action_names = _action_targets(step.get("actions"))
+    action_names = {_fold_identifier(name) for name in _action_targets(step.get("actions"))}
     signal_names = {
-        str(item.get("id")): str(item.get("name"))
+        _fold_identifier(item.get("id")): _fold_identifier(item.get("name"))
         for item in ir.get("signals", [])
         if item.get("id") and item.get("name")
     }
     blocked: list[str] = []
     for interlock in ir.get("interlocks", []):
-        action_id = str(interlock.get("action_id") or "")
+        action_id = _fold_identifier(interlock.get("action_id"))
         if action_id not in action_names and signal_names.get(action_id) not in action_names:
             continue
         allow = _safe_eval(_translated_condition(interlock.get("allow_condition"), ir), values)
@@ -244,8 +275,8 @@ def run_reference_simulation(
     values.update({name: False for name in internal_states})
     external_inputs = _signal_names_for_directions(ir, _EXTERNAL_INPUT_DIRECTIONS)
     action_targets = _signal_names_for_directions(ir, _ACTION_TARGET_DIRECTIONS)
-    _validate_values(input_overrides or {}, external_inputs, context="模拟")
-    values.update(input_overrides or {})
+    normalized_overrides = _normalize_values(input_overrides or {}, external_inputs, context="模拟")
+    values.update(normalized_overrides)
     schedule = _cycle_schedule(input_schedule, external_inputs, max_cycles)
     restarts = _cycle_set(restart_cycles, max_cycles, "restart_cycles")
     disconnects = _cycle_set(disconnect_cycles, max_cycles, "disconnect_cycles")
@@ -260,8 +291,8 @@ def run_reference_simulation(
     reset_names = {name for name in external_inputs if "RESET" in name.upper()}
     reset_active = False
     steps = ir.get("steps", [])
-    by_id = {str(item.get("id")): item for item in steps}
-    current = str(steps[0].get("id")) if steps else None
+    by_id = {_fold_identifier(item.get("id")): item for item in steps}
+    current = _fold_identifier(steps[0].get("id")) if steps else None
     traces: list[dict[str, Any]] = []
     events: list[str] = []
     completed = False
@@ -299,7 +330,7 @@ def run_reference_simulation(
             values = _signal_defaults(ir)
             values.update({name: False for name in internal_states})
             values.update(persistent)
-            current = str(steps[0].get("id"))
+            current = _fold_identifier(steps[0].get("id"))
             step_cycles = 0
             timeout_reported = False
             reset_active = False
@@ -365,13 +396,14 @@ def run_reference_simulation(
         if reset_triggered:
             cycle_events.append("RESET_TRIGGERED")
             events.append(f"reset_triggered:{cycle}")
-            current = str(steps[0].get("id"))
+            current = _fold_identifier(steps[0].get("id"))
             step_cycles = 0
             timeout_reported = False
         traces.append({"cycle": cycle, "step_id": step.get("id"), "inputs": inputs_snapshot, "outputs": outputs, "entry_condition": entry_condition, "completion_condition": completion_condition, "events": cycle_events, "source": step.get("source"), "communication": "disconnected" if communication_disconnected else "connected", "internal_state": {name: values.get(name, False) for name in sorted(internal_states)}})
         if done and "RESET_TRIGGERED" not in cycle_events:
             events.append(f"step_complete:{current}")
-            current = str(step.get("next_step_id")) if step.get("next_step_id") and step.get("next_step_id") != "END" else None
+            next_step = _fold_identifier(step.get("next_step_id"))
+            current = next_step if next_step and next_step != "end" else None
             step_cycles = 0
             timeout_reported = False
         if current is None:
@@ -405,11 +437,11 @@ def run_test_spec(
     signals = _signal_defaults(ir)
     external_inputs = _signal_names_for_directions(ir, _EXTERNAL_INPUT_DIRECTIONS)
     action_targets = _signal_names_for_directions(ir, _ACTION_TARGET_DIRECTIONS)
-    _validate_values(input_overrides or {}, external_inputs, context="模拟")
-    signals.update(input_overrides or {})
+    normalized_overrides = _normalize_values(input_overrides or {}, external_inputs, context="模拟")
+    signals.update(normalized_overrides)
 
-    steps = {str(item.get("id")): item for item in ir.get("steps", [])}
-    exceptions = {str(item.get("exception_id")): item for item in ir.get("exceptions", [])}
+    steps = {_fold_identifier(item.get("id")): item for item in ir.get("steps", [])}
+    exceptions = {_fold_identifier(item.get("exception_id")): item for item in ir.get("exceptions", [])}
     allowed = {"id", "source_step_id", "source_exception_id", "inputs", "given", "when", "expect"}
     seen: set[str] = set()
     case_results: list[dict[str, Any]] = []
@@ -417,15 +449,16 @@ def run_test_spec(
         if not isinstance(raw_case, dict) or set(raw_case) - allowed:
             raise SimulationInputError("TestSpec 用例包含不受支持的字段")
         case_id = str(raw_case.get("id") or "").strip()
-        if not case_id or case_id in seen:
+        folded_case_id = _fold_identifier(case_id)
+        if not case_id or folded_case_id in seen:
             raise SimulationInputError("TestSpec 用例 ID 缺失或重复")
-        seen.add(case_id)
+        seen.add(folded_case_id)
         values = dict(signals)
         case_inputs = raw_case.get("inputs") or {}
         if not isinstance(case_inputs, dict):
             raise SimulationInputError("TestSpec inputs 必须是对象")
-        _validate_values(case_inputs, external_inputs, context="TestSpec")
-        values.update(case_inputs)
+        normalized_case_inputs = _normalize_values(case_inputs, external_inputs, context="TestSpec")
+        values.update(normalized_case_inputs)
         given = _safe_eval(str(raw_case.get("given") or "TRUE"), values)
         changes = _apply_actions(str(raw_case.get("when") or ""), values, action_targets)
         expected = _safe_eval(str(raw_case.get("expect") or "TRUE"), values)
@@ -434,11 +467,11 @@ def run_test_spec(
         source_exception_id = raw_case.get("source_exception_id")
         if bool(source_step_id) == bool(source_exception_id):
             raise SimulationInputError("TestSpec 用例必须且只能引用一个工步或异常")
-        if source_step_id and str(source_step_id) not in steps:
+        if source_step_id and _fold_identifier(source_step_id) not in steps:
             raise SimulationInputError(f"TestSpec 引用不存在的工步: {source_step_id}")
-        if source_exception_id and str(source_exception_id) not in exceptions:
+        if source_exception_id and _fold_identifier(source_exception_id) not in exceptions:
             raise SimulationInputError(f"TestSpec 引用不存在的异常: {source_exception_id}")
-        source_object = steps.get(str(source_step_id)) or exceptions.get(str(source_exception_id)) or {}
+        source_object = steps.get(_fold_identifier(source_step_id)) or exceptions.get(_fold_identifier(source_exception_id)) or {}
         case_results.append({
             "id": case_id,
             "status": status,
@@ -462,10 +495,12 @@ def run_test_spec(
     if set((restart_cycles or [])) & set((disconnect_cycles or [])):
         raise SimulationInputError("同一周期不能同时重启和断开通信")
 
-    sequence_inputs = dict(input_overrides or {})
+    sequence_inputs = dict(normalized_overrides)
     for raw_case in tests:
         for key, value in (raw_case.get("inputs") or {}).items():
-            sequence_inputs.setdefault(key, value)
+            canonical = _canonical_names(external_inputs).get(_fold_identifier(key))
+            if canonical is not None:
+                sequence_inputs.setdefault(canonical, value)
     sequence_result = run_reference_simulation(
         ir,
         sequence_inputs,

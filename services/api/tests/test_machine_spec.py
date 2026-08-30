@@ -61,6 +61,25 @@ def test_validation_rules_cover_core_engineering_failures(tmp_path) -> None:
     } <= codes
 
 
+def test_validation_uses_case_insensitive_iec_identifiers(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    spec, _ = parse_workbook(generate_workbook(project_payload(), kind="example"), settings)
+    first_signal = spec["signals"][0]["signal_id"]
+    spec["sequence"][0]["entry_condition"] = first_signal.lower()
+    spec["sequence"][0]["next_step_id"] = spec["sequence"][1]["step_id"].lower()
+    codes = {item.code for item in validate_spec(spec, project_payload())}
+    assert "SIGNAL_REFERENCE_MISSING" not in codes
+    assert "NEXT_STEP_MISSING" not in codes
+    assert "UNREACHABLE_STEP" not in codes
+
+    duplicate = dict(spec["signals"][0])
+    duplicate["signal_id"] = first_signal.swapcase()
+    duplicate["source"] = {"sheet": "Signals", "row": 999}
+    duplicate["address"] = "X7F"
+    spec["signals"].append(duplicate)
+    assert "DUPLICATE_ID" in {item.code for item in validate_spec(spec, project_payload())}
+
+
 def test_cell_patch_does_not_mutate_source(tmp_path) -> None:
     settings = Settings(data_dir=tmp_path)
     spec, _ = parse_workbook(generate_workbook(project_payload(), kind="example"), settings)

@@ -85,7 +85,7 @@
 
 Adapter v1 能力固定为 detect_environment、get_capabilities、prepare_workspace_copy、compile、get_diagnostics、start_simulation、get_trace、export_vendor_project。ManualAdapter 对厂商操作只返回 manual_required/unverified，不会启动未知程序；reference 的模拟入口只代表 automatic_reference。
 
-生成物审计绑定生成任务创建时的不可变 ProgramCommit，并再次核验 Control IR、TestSpec、ProgramArtifact 与锁定 MachineSpec 的内容哈希。审计报告按 audit_version + Commit 固定，重复请求复用同一结果；发现包含严重级别、文件/行号、稳定对象 ID、Excel 来源和恢复动作。
+生成物审计 v2 绑定生成任务创建时的不可变 ProgramCommit，并再次核验 Control IR、TestSpec、ProgramArtifact 与锁定 MachineSpec 的内容哈希。IEC/ST 标识符按不区分大小写的语义比较，但诊断保留原始拼写；审计 `input_hash` 显式包含 `audit_version`、生成器版本和全部不可变输入，版本变化不会复用旧报告。发现包含严重级别、文件/行号、稳定对象 ID、Excel 来源和恢复动作。
 
 项目自动审核在生成 Commit 和内容寻址工件落库后自动触发，默认 repeat_count=20。报告固定包含不可变基线、重复生成、来源追溯、静态审计、参考执行器、变异检测和安全边界七项检查，以及五项 pending_external 外部验证门。POST 请求包含 generation_run_id、repeat_count（2–50）和 expected_generation_revision，并接受 If-Match；过期版本返回 409。
 
@@ -93,7 +93,7 @@ AutomatedReviewRun 以 generation_run_id、review_version 和 input_hash 唯一�
 
 编译准备状态为 manual_required，前置条件是生成任务处于 review_ready、当前不可变 Commit 的项目自动审核存在且状态为 passed。证据上传携带 expected_revision，原件按 SHA-256 去重保存，任何证据均保持 manual_unverified。
 
-参考模拟状态为 review_ready 或 failed，使用版本化 TestSpec DSL（当前 1.0）和受限表达式/赋值语法；不执行任意 Python、ST、Shell 或外部进程。请求可携带 `input_overrides`、按周期的 `input_schedule`、`restart_cycles`、`disconnect_cycles`、`max_cycles` 和 `cycle_time_ms`。只有 DI、AI 和 COMM 可作为外部输入；动作只能写入 DO、AO、INTERNAL 和 COMM，TestSpec 生成与静态审计使用同一方向门禁。未知字段、未知信号、方向不匹配、非有限数值、越界周期及同周期重启/断线均被拒绝。结果绑定 ProgramCommit、TestSpecRevision、Control IR 和引擎版本，并保存不可变周期 Trace 工件。Trace 分离动作执行前的外部信号 `inputs`、本周期 `outputs` 和只读 `internal_state`，同时记录入口/完成条件、Excel 来源、通信状态、事件与结构化诊断；历史仅含事件数组的记录仍可读取。未显式建模的互锁内部状态只在参考执行器中按只读 `false` 处理并产生 warning，不能通过 API 注入，也不代表现场状态。
+参考模拟状态为 review_ready 或 failed，使用 `kongpu-reference-v2`、版本化 TestSpec DSL（当前 1.0）和受限表达式/赋值语法；不执行任意 Python、ST、Shell 或外部进程。信号、工步、互锁和 TestSpec 引用遵循 IEC/ST 不区分大小写语义；仅大小写不同的歧义定义或重复输入会被确定性拒绝。请求可携带 `input_overrides`、按周期的 `input_schedule`、`restart_cycles`、`disconnect_cycles`、`max_cycles` 和 `cycle_time_ms`。只有 DI、AI 和 COMM 可作为外部输入；动作只能写入 DO、AO、INTERNAL 和 COMM，TestSpec 生成与静态审计使用同一方向门禁。未知字段、未知信号、方向不匹配、非有限数值、越界周期及同周期重启/断线均被拒绝。结果绑定 ProgramCommit、TestSpecRevision、Control IR 和引擎版本，并保存不可变周期 Trace 工件；引擎版本变化不能继承旧结果。Trace 分离动作执行前的外部信号 `inputs`、本周期 `outputs` 和只读 `internal_state`，同时记录入口/完成条件、Excel 来源、通信状态、事件与结构化诊断；历史仅含事件数组的记录仍可读取。未显式建模的互锁内部状态只在参考执行器中按只读 `false` 处理并产生 warning，不能通过 API 注入，也不代表现场状态。
 
 交付候选创建必须绑定当前 GenerationRun、当前分支 head Commit、passed 自动审核、无 blocker 静态审计和当前 Commit 的 review_ready 参考模拟。分支存在未提交修改时返回 409。候选 ZIP 使用固定时间戳和排序条目生成，MANIFEST.json 记录基线、外部验证门、文件 SHA-256 与大小；相同 project_id + input_hash 只复用原候选。状态固定为 external_validation_required，验证等级固定为 automatic_package。
 

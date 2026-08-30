@@ -60,6 +60,11 @@ BOOL_DIRECTIONS = {"DI", "DO"}
 NUMERIC_DIRECTIONS = {"AI", "AO"}
 
 
+def _fold_identifier(value: Any) -> str:
+    """Return the IEC identifier comparison form without changing display text."""
+    return str(value or "").strip().casefold()
+
+
 class SourceRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
     sheet: str
@@ -416,9 +421,9 @@ def _identifier_issues(items: list[dict[str, Any]], key: str, sheet: str) -> lis
             issues.append(IssueData("MISSING_ID", "blocker", "稳定 ID 为空", f"{key} 为必填项", sheet, source["row"], key))
         elif not ID_PATTERN.match(value):
             issues.append(IssueData("INVALID_ID", "blocker", "稳定 ID 格式无效", f"{value} 必须以字母开头且只能包含字母、数字、下划线或短横线", sheet, source["row"], key, value))
-        elif value in seen:
+        elif _fold_identifier(value) in seen:
             issues.append(IssueData("DUPLICATE_ID", "blocker", "稳定 ID 重复", f"{value} 在 {sheet} 中重复", sheet, source["row"], key, value))
-        seen.add(value)
+        seen.add(_fold_identifier(value))
     return issues
 
 
@@ -427,7 +432,8 @@ def _references(expression: str | None, candidates: set[str]) -> set[str]:
         return set()
     tokens = set(re.findall(r"[A-Za-z][A-Za-z0-9_\-]*", expression))
     keywords = {"TRUE", "FALSE", "AND", "OR", "NOT", "END"}
-    return {token for token in tokens if token not in candidates and token.upper() not in keywords and not token.isdigit()}
+    folded_candidates = {_fold_identifier(item) for item in candidates}
+    return {token for token in tokens if _fold_identifier(token) not in folded_candidates and token.upper() not in keywords and not token.isdigit()}
 
 
 def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None = None) -> list[IssueData]:
@@ -452,13 +458,13 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
     issues.extend(_identifier_issues(spec["interlocks"], "interlock_id", "Interlocks"))
     issues.extend(_identifier_issues(spec["exceptions"], "exception_id", "Exceptions"))
 
-    component_ids = {item["component_id"] for item in spec["components"] if item.get("component_id")}
-    signal_ids = {item["signal_id"] for item in spec["signals"] if item.get("signal_id")}
-    step_ids = {item["step_id"] for item in spec["sequence"] if item.get("step_id")}
+    component_ids = {_fold_identifier(item["component_id"]) for item in spec["components"] if item.get("component_id")}
+    signal_ids = {_fold_identifier(item["signal_id"]) for item in spec["signals"] if item.get("signal_id")}
+    step_ids = {_fold_identifier(item["step_id"]) for item in spec["sequence"] if item.get("step_id")}
 
     for component in spec["components"]:
         parent = component.get("parent_id")
-        if parent and parent not in component_ids:
+        if parent and _fold_identifier(parent) not in component_ids:
             source = component["source"]
             issues.append(IssueData("COMPONENT_PARENT_MISSING", "blocker", "父级元件不存在", f"{parent} 未在 Components 中定义", "Components", source["row"], "parent_id", component.get("component_id")))
         if component.get("parameter_value") is not None and not component.get("parameter_unit"):
@@ -482,7 +488,7 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
         if data_type in {"INT", "DINT", "REAL"} and not signal.get("unit"):
             issues.append(IssueData("UNIT_REQUIRED", "warning", "数值信号缺少单位", "数值信号应明确工程单位", "Signals", source["row"], "unit", signal_id))
         component_id = signal.get("component_id")
-        if component_id and component_id not in component_ids:
+        if component_id and _fold_identifier(component_id) not in component_ids:
             issues.append(IssueData("SIGNAL_COMPONENT_MISSING", "blocker", "信号引用的元件不存在", f"{component_id} 未在 Components 中定义", "Signals", source["row"], "component_id", signal_id))
         address = str(signal.get("address") or "").upper()
         if address:
@@ -496,8 +502,10 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
         source = step["source"]
         step_id = step.get("step_id")
         next_step = step.get("next_step_id")
-        edges[str(step_id)] = str(next_step) if next_step else None
-        if next_step not in terminal_steps and next_step not in step_ids:
+        folded_step_id = _fold_identifier(step_id)
+        folded_next_step = _fold_identifier(next_step)
+        edges[folded_step_id] = folded_next_step if next_step else None
+        if next_step not in terminal_steps and folded_next_step != "end" and folded_next_step not in step_ids:
             issues.append(IssueData("NEXT_STEP_MISSING", "blocker", "下一步骤不存在", f"{next_step} 未在 Sequence 中定义", "Sequence", source["row"], "next_step_id", step_id))
         if step.get("expected_duration") is not None and not step.get("duration_unit"):
             issues.append(IssueData("UNIT_REQUIRED", "blocker", "步骤时长缺少单位", "expected_duration 有值时必须填写 duration_unit", "Sequence", source["row"], "duration_unit", step_id))
@@ -506,14 +514,14 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
                 issues.append(IssueData("SIGNAL_REFERENCE_MISSING", "blocker", "步骤引用的信号不存在", f"{unknown} 未在 Signals 中定义", "Sequence", source["row"], column, step_id))
 
     if spec["sequence"]:
-        start = str(spec["sequence"][0].get("step_id"))
+        start = _fold_identifier(spec["sequence"][0].get("step_id"))
         reachable: set[str] = set()
         current: str | None = start
-        while current and current not in reachable and current != "END":
+        while current and current not in reachable and current != "end":
             reachable.add(current)
             current = edges.get(current)
         for step in spec["sequence"]:
-            step_id = str(step.get("step_id"))
+            step_id = _fold_identifier(step.get("step_id"))
             if step_id not in reachable:
                 source = step["source"]
                 issues.append(IssueData("UNREACHABLE_STEP", "blocker", "流程步骤不可达", f"{step_id} 无法从首步骤到达", "Sequence", source["row"], "step_id", step_id))

@@ -9,7 +9,7 @@ from .generator import GeneratedBundle, GENERATOR_VERSION, content_hash, generat
 from .simulation import SimulationInputError, run_reference_simulation, run_test_spec
 
 
-AUTOMATED_REVIEW_VERSION = "1"
+AUTOMATED_REVIEW_VERSION = "2"
 DEFAULT_REPEAT_COUNT = 20
 EXTERNAL_VALIDATION_GATES = (
     {

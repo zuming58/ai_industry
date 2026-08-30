@@ -2834,7 +2834,7 @@ def project_timeline(session: Session, project_id: str) -> dict[str, Any]:
             detail=f"{row.status} · {row.audit_version}",
             author="控谱审计器",
             request="检查 ST、Control IR 和来源追溯",
-            tool="Generation Audit v1",
+            tool=f"Generation Audit {row.audit_version.split(':', 1)[0]}",
             status=row.status,
             verification_level="automatic",
             source={"page": "compile", "audit_id": row.id, "program_commit_id": row.program_commit_id},
