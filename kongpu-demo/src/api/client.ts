@@ -13,8 +13,12 @@ import type {
   ProgramCommit,
   ProgramFile,
   Project,
+  ReleaseCandidate,
   SpecRevision,
   SimulationRun,
+  MonitoringPlan,
+  MonitoringEvidence,
+  CommissioningTask,
 } from "../domain";
 
 export const apiClient = createClient<paths>({ baseUrl: "" });
@@ -190,6 +194,52 @@ export const api = {
   },
   async getSimulationTrace(runId: string): Promise<{ simulation_run_id: string; engine_version: string; verification_level: string; traces: Array<Record<string, unknown>> }> {
     return ensure(await apiClient.GET("/api/v1/simulation-runs/{run_id}/trace", { params: { path: { run_id: runId } } }));
+  },
+  async listReleaseCandidates(projectId: string): Promise<ReleaseCandidate[]> {
+    return ensure(await apiClient.GET("/api/v1/projects/{project_id}/release-candidates", { params: { path: { project_id: projectId } } }));
+  },
+  async createReleaseCandidate(projectId: string, generationRunId: string, expectedGenerationRevision: number): Promise<ReleaseCandidate> {
+    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/release-candidates", {
+      params: { path: { project_id: projectId } },
+      headers: { "If-Match": String(expectedGenerationRevision) },
+      body: { generation_run_id: generationRunId, expected_generation_revision: expectedGenerationRevision },
+    }));
+  },
+  async downloadArtifact(artifactId: string): Promise<Blob> {
+    return ensure(await apiClient.GET("/api/v1/artifacts/{artifact_id}", { params: { path: { artifact_id: artifactId } }, parseAs: "blob" }));
+  },
+  async listMonitoringPlans(projectId: string): Promise<MonitoringPlan[]> {
+    return ensure(await apiClient.GET("/api/v1/projects/{project_id}/monitoring-plans", { params: { path: { project_id: projectId } } }));
+  },
+  async createMonitoringPlan(projectId: string, candidateId: string, expectedCandidateRevision: number): Promise<MonitoringPlan> {
+    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/monitoring-plans", {
+      params: { path: { project_id: projectId } },
+      headers: { "If-Match": String(expectedCandidateRevision) },
+      body: { release_candidate_id: candidateId, expected_candidate_revision: expectedCandidateRevision },
+    }));
+  },
+  async listMonitoringEvidence(planId: string): Promise<MonitoringEvidence[]> {
+    return ensure(await apiClient.GET("/api/v1/monitoring-plans/{plan_id}/evidence", { params: { path: { plan_id: planId } } }));
+  },
+  async createMonitoringSnapshot(plan: MonitoringPlan, values: Record<string, boolean | number>, currentStepId?: string, note?: string): Promise<MonitoringEvidence> {
+    return ensure(await apiClient.POST("/api/v1/monitoring-plans/{plan_id}/snapshots", {
+      params: { path: { plan_id: plan.id } },
+      headers: { "If-Match": String(plan.revision) },
+      body: {
+        observed_target_fingerprint: plan.target_fingerprint,
+        values,
+        current_step_id: currentStepId || null,
+        note: note || null,
+        expected_plan_revision: plan.revision,
+      },
+    }));
+  },
+  async createCommissioningTask(evidenceId: string, description: string, expectedPlanRevision: number): Promise<CommissioningTask> {
+    return ensure(await apiClient.POST("/api/v1/monitoring-evidence/{evidence_id}/commissioning-tasks", {
+      params: { path: { evidence_id: evidenceId } },
+      headers: { "If-Match": String(expectedPlanRevision) },
+      body: { description, expected_plan_revision: expectedPlanRevision },
+    }));
   },
 };
 

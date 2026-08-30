@@ -235,4 +235,93 @@ export type SimulationRun = {
   updated_at: string;
 };
 
+export type ReleaseCandidate = {
+  id: string;
+  project_id: string;
+  generation_run_id: string;
+  program_commit_id: string;
+  automated_review_id: string;
+  version: string;
+  input_hash: string;
+  manifest_hash: string;
+  manifest: {
+    claim_boundary: string;
+    external_validation_gates: ExternalValidationGate[];
+    baseline: Record<string, unknown>;
+    entries: Array<{ path: string; sha256: string; size_bytes: number }>;
+    [key: string]: unknown;
+  };
+  status: "external_validation_required";
+  verification_level: "automatic_package";
+  package_artifact_id: string;
+  package_sha256: string;
+  package_size_bytes: number;
+  revision: number;
+  reused?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MonitoringVariable = {
+  name: string;
+  signal_id: string;
+  address?: string | null;
+  data_type?: string | null;
+  direction?: string | null;
+  source: { sheet?: string | null; row?: number | null };
+  access: "read_only";
+};
+
+export type MonitoringPlan = {
+  id: string;
+  project_id: string;
+  release_candidate_id: string;
+  target_fingerprint: string;
+  variable_map_hash: string;
+  variable_map: MonitoringVariable[];
+  status: string;
+  verification_level: "unverified";
+  access: "read_only";
+  evidence_count: number;
+  revision: number;
+  reused?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MonitoringEvidence = {
+  id: string;
+  project_id: string;
+  monitoring_plan_id: string;
+  source_artifact_id: string;
+  artifact_sha256: string;
+  status: "recorded_unverified" | "data_incomplete";
+  verification_level: "manual_unverified";
+  analysis: {
+    current_step_id?: string | null;
+    waiting_condition?: string | null;
+    condition_values: Record<string, boolean | number>;
+    missing_condition_values: string[];
+    captured_variable_count: number;
+    claim_boundary: string;
+    [key: string]: unknown;
+  };
+  note?: string | null;
+  commissioning_task_id?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CommissioningTask = {
+  id: string;
+  project_id: string;
+  monitoring_evidence_id: string;
+  branch_id: string;
+  generation_run_id: string;
+  description: string;
+  status: "open";
+  created_at: string;
+  updated_at: string;
+};
+
 export type ApiError = { code?: string; message?: string; action?: string; location?: unknown };

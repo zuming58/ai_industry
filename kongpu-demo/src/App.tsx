@@ -10,8 +10,8 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } fr
 import { api, saveBlob } from "./api/client";
 import type {
   AdapterDescriptor, AdapterEnvironment, AutomatedReviewRun, CompileRun, GenerationRun,
-  MachineSpec, ProgramBranch, ProgramCommit, ProgramFile, Project, SimulationRun,
-  SpecRevision, ValidationIssue,
+  MachineSpec, MonitoringEvidence, ProgramBranch, ProgramCommit, ProgramFile,
+  Project, ReleaseCandidate, SimulationRun, SpecRevision, ValidationIssue,
 } from "./domain";
 
 const BRAND_ICON = "/assets/brand/kongpu-app-icon.png";
@@ -215,14 +215,15 @@ function ReviewView({ view, spec }: { view: string; spec: SpecRevision }) {
 }
 
 function ProgramPage() {
-  const queryClient = useQueryClient(); const { projectId, project } = useProjectContext(); const branches = useQuery({ queryKey: ["branches", projectId], queryFn: () => api.listBranches(projectId) }); const runs = useQuery({ queryKey: ["runs", projectId], queryFn: () => api.listRuns(projectId) }); const [branchId, setBranchId] = useState(""); const activeId = branchId || branches.data?.[0]?.id || ""; const files = useQuery({ queryKey: ["files", activeId], queryFn: () => api.listFiles(activeId), enabled: Boolean(activeId) }); const [path, setPath] = useState(""); const selectedPath = path || files.data?.files[0]?.path || ""; const file = useQuery({ queryKey: ["file", activeId, selectedPath], queryFn: () => api.getFile(activeId, selectedPath), enabled: Boolean(activeId && selectedPath) }); const [content, setContent] = useState(""); const [message, setMessage] = useState("Review generated program");
-  useEffect(() => { if (file.data) setContent(file.data.content); }, [file.data?.content]);
+  const queryClient = useQueryClient(); const { projectId, project } = useProjectContext(); const branches = useQuery({ queryKey: ["branches", projectId], queryFn: () => api.listBranches(projectId) }); const runs = useQuery({ queryKey: ["runs", projectId], queryFn: () => api.listRuns(projectId) }); const [branchId, setBranchId] = useState(""); const activeId = branchId || branches.data?.[0]?.id || ""; const files = useQuery({ queryKey: ["files", activeId], queryFn: () => api.listFiles(activeId), enabled: Boolean(activeId) }); const [path, setPath] = useState(""); const defaultEditablePath = files.data?.files.find((item) => item.path === "src/PRG_AutoCycle.st")?.path || files.data?.files.find((item) => item.path.startsWith("src/") && item.path.endsWith(".st"))?.path || files.data?.files[0]?.path || ""; const selectedPath = path || defaultEditablePath; const immutablePath = selectedPath === "generated/ControlIR.json" || selectedPath === "tests/TestSpec.json"; const file = useQuery({ queryKey: ["file", activeId, selectedPath], queryFn: () => api.getFile(activeId, selectedPath), enabled: Boolean(activeId && selectedPath) }); const fileKey = activeId && selectedPath ? `${activeId}:${selectedPath}` : ""; const [editor, setEditor] = useState({ key: "", content: "" }); const [message, setMessage] = useState("Review generated program");
+  useEffect(() => { if (file.data?.path === selectedPath) setEditor({ key: fileKey, content: file.data.content }); }, [file.data?.content, file.data?.path, fileKey, selectedPath]);
+  const editorReady = Boolean(fileKey && editor.key === fileKey && file.data?.path === selectedPath && file.data.branch_revision === files.data?.branch.revision);
   const generate = async () => { const specId = project.data?.current_spec_revision_id; if (!specId) return notifyError(new Error("没有已锁定 MachineSpec")); try { await api.generate(projectId, specId, "generated/spec-" + Date.now()); queryClient.invalidateQueries({ queryKey: ["branches", projectId] }); queryClient.invalidateQueries({ queryKey: ["runs", projectId] }); notify("已生成确定性 FX5U ST 骨架和 TestSpec"); } catch (error) { notifyError(error); } };
-  const save = async () => { if (!files.data?.branch || !selectedPath) return; try { const result = await api.saveFile(activeId, selectedPath, content, files.data.branch.revision); await queryClient.invalidateQueries({ queryKey: ["files", activeId] }); queryClient.setQueryData(["file", activeId, selectedPath], { path: selectedPath, content, branch_revision: result.branch.revision }); notify("文件已保存到工作分支，尚未提交"); } catch (error) { notifyError(error); } };
-  const commit = async () => { if (!files.data?.branch) return; try { await api.commit(files.data.branch, message); await queryClient.invalidateQueries({ queryKey: ["files", activeId] }); await queryClient.invalidateQueries({ queryKey: ["branches", projectId] }); notify("程序修改已提交到本地 Git 历史"); } catch (error) { notifyError(error); } };
+  const save = async () => { if (!files.data?.branch || !selectedPath || immutablePath) return; if (!editorReady || file.data?.path !== selectedPath) return notifyError(new Error("当前文件尚未完整加载，请稍后再保存")); try { const result = await api.saveFile(activeId, selectedPath, editor.content, files.data.branch.revision); await queryClient.invalidateQueries({ queryKey: ["files", activeId] }); queryClient.setQueryData(["file", activeId, selectedPath], { path: selectedPath, content: editor.content, branch_revision: result.branch.revision }); notify("文件已保存到工作分支，尚未提交"); } catch (error) { notifyError(error); } };
+  const commit = async () => { if (!files.data?.branch) return; try { await api.commit(files.data.branch, message); await Promise.all([queryClient.invalidateQueries({ queryKey: ["files", activeId] }), queryClient.invalidateQueries({ queryKey: ["branches", projectId] }), queryClient.invalidateQueries({ queryKey: ["runs", projectId] }), queryClient.invalidateQueries({ queryKey: ["automated-reviews", projectId] })]); notify("程序修改已提交到本地 Git 历史"); } catch (error) { notifyError(error); } };
   const latestRun = runs.data?.[0];
   return <ProjectPage kicker="P06 · PROGRAM" title="程序工作区" description="从已锁定规格生成确定性 FX5U ST；不声明通过 GX Works3 编译。" actions={<button className="button button--primary" disabled={project.data?.status !== "规格锁定"} onClick={generate}><Code size={16} />生成程序</button>}>
-    {branches.data?.length ? <><div className="program-toolbar"><GitBranch size={15} /><select value={activeId} onChange={(event) => { setBranchId(event.target.value); setPath(""); }}>{branches.data.map((branch) => <option value={branch.id} key={branch.id}>{branch.name}</option>)}</select><span><Status value={files.data?.branch.status || "读取中"} /></span><span>生成器 {latestRun?.generator_version || "-"}</span><button onClick={save}>保存文件</button></div><div className="program-layout"><section className="panel file-tree"><div className="panel__header"><div><h3>程序树</h3><p>{files.data?.files.length || 0} 个文件</p></div></div>{files.data?.files.map((item: ProgramFile) => <button key={item.path} className={selectedPath === item.path ? "is-active" : ""} onClick={() => setPath(item.path)}><FileCode size={15} />{item.path}</button>)}</section><section className="code-panel"><div className="code-panel__header"><span>{selectedPath || "选择文件"}</span><button onClick={save}>保存</button></div><textarea className="code-editor" value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} /></section><aside className="panel trace-panel"><div className="panel__header"><div><h3>提交与追溯</h3><p>不改写历史</p></div></div><label className="commit-box">提交说明<input value={message} onChange={(event) => setMessage(event.target.value)} /><button className="button button--primary" disabled={files.data?.branch.status !== "modified"} onClick={commit}>创建 Commit</button></label>{latestRun?.warnings.map((warning) => <div className="trace-item" key={warning.code}><span>{warning.code}</span><strong>{warning.message}</strong></div>)}{latestRun?.trace_links.slice(0, 5).map((link, index) => <div className="trace-item" key={index}><span>{String(link.output_path)}:{String(link.output_line)}</span><strong>{String(link.entity_id)}</strong><small>{String(link.source_sheet)} 第 {String(link.source_row)} 行</small></div>)}</aside></div></> : <EmptyState title="尚未生成程序工作区" text={project.data?.status === "规格锁定" ? "点击“生成程序”创建独立分支、ST、Control IR 与 TestSpec。" : "先在 P05 完成规格锁定，才能生成程序。"} action={project.data?.status === "规格锁定" ? <button className="button button--primary" onClick={generate}>生成程序</button> : undefined} />}
+    {branches.data?.length ? <><div className="program-toolbar"><GitBranch size={15} /><select value={activeId} onChange={(event) => { setBranchId(event.target.value); setPath(""); }}>{branches.data.map((branch) => <option value={branch.id} key={branch.id}>{branch.name}</option>)}</select><span><Status value={files.data?.branch.status || "读取中"} /></span><span>生成器 {latestRun?.generator_version || "-"}</span><button disabled={immutablePath || !editorReady} onClick={save}>保存文件</button></div><div className="program-layout"><section className="panel file-tree"><div className="panel__header"><div><h3>程序树</h3><p>{files.data?.files.length || 0} 个文件</p></div></div>{files.data?.files.map((item: ProgramFile) => <button key={item.path} className={selectedPath === item.path ? "is-active" : ""} onClick={() => setPath(item.path)}><FileCode size={15} />{item.path}</button>)}</section><section className="code-panel"><div className="code-panel__header"><span>{selectedPath || "选择文件"}{immutablePath ? " · 不可变基线（只读）" : !editorReady ? " · 正在加载（只读）" : ""}</span><button disabled={immutablePath || !editorReady} onClick={save}>保存</button></div><textarea className="code-editor" value={editorReady ? editor.content : ""} onChange={(event) => editorReady && setEditor({ key: fileKey, content: event.target.value })} readOnly={immutablePath || !editorReady} aria-readonly={immutablePath || !editorReady} aria-busy={!editorReady} placeholder={editorReady ? undefined : "正在读取当前 Commit 文件…"} spellCheck={false} /></section><aside className="panel trace-panel"><div className="panel__header"><div><h3>提交与追溯</h3><p>不改写历史</p></div></div><label className="commit-box">提交说明<input value={message} onChange={(event) => setMessage(event.target.value)} /><button className="button button--primary" disabled={files.data?.branch.status !== "modified"} onClick={commit}>创建 Commit</button></label>{latestRun?.warnings.map((warning) => <div className="trace-item" key={warning.code}><span>{warning.code}</span><strong>{warning.message}</strong></div>)}{latestRun?.trace_links.slice(0, 5).map((link, index) => <div className="trace-item" key={index}><span>{String(link.output_path)}:{String(link.output_line)}</span><strong>{String(link.entity_id)}</strong><small>{String(link.source_sheet)} 第 {String(link.source_row)} 行</small></div>)}</aside></div></> : <EmptyState title="尚未生成程序工作区" text={project.data?.status === "规格锁定" ? "点击“生成程序”创建独立分支、ST、Control IR 与 TestSpec。" : "先在 P05 完成规格锁定，才能生成程序。"} action={project.data?.status === "规格锁定" ? <button className="button button--primary" onClick={generate}>生成程序</button> : undefined} />}
   </ProjectPage>;
 }
 
@@ -235,8 +236,135 @@ function CapabilityPage() {
   const { capability = "" } = useParams();
   if (capability === "compile") return <CompilePage />;
   if (capability === "simulation") return <SimulationPage />;
+  if (capability === "release") return <ReleasePage />;
+  if (capability === "monitor") return <MonitoringPage />;
   const labels: Record<string, string> = { release: "P09 发布包", monitor: "P10 在线监控" };
   return <ProjectPage kicker="M4 BOUNDARY" title={labels[capability] || capability} description="该页面尚未接入真实设备能力。"><UnavailableBody detail={capability === "monitor" ? "未实现 PLC 下载、RUN/STOP、强制输出或真实在线连接。" : "发布能力将在真实厂商编译、模拟和安全审查之后接入。"} /></ProjectPage>;
+}
+
+function ReleasePage() {
+  const queryClient = useQueryClient();
+  const { projectId } = useProjectContext();
+  const runs = useQuery({ queryKey: ["runs", projectId], queryFn: () => api.listRuns(projectId) });
+  const reviews = useQuery({ queryKey: ["automated-reviews", projectId], queryFn: () => api.listAutomatedReviews(projectId) });
+  const simulations = useQuery({ queryKey: ["simulation-runs", projectId], queryFn: () => api.listSimulationRuns(projectId) });
+  const candidates = useQuery({ queryKey: ["release-candidates", projectId], queryFn: () => api.listReleaseCandidates(projectId) });
+  const [runId, setRunId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const selectedRunId = runId || runs.data?.[0]?.id || "";
+  const run = runs.data?.find((item) => item.id === selectedRunId);
+  const review = reviews.data?.find((item) => item.generation_run_id === selectedRunId);
+  const simulation = simulations.data?.find((item) => item.generation_run_id === selectedRunId && item.status === "review_ready");
+  const candidate = candidates.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === review?.program_commit_id);
+
+  const createCandidate = async () => {
+    if (!run) return;
+    setBusy(true);
+    try {
+      const result = await api.createReleaseCandidate(projectId, run.id, run.revision);
+      await queryClient.invalidateQueries({ queryKey: ["release-candidates", projectId] });
+      notify(result.reused ? "不可变输入未变化，已复用交付候选包" : "交付候选包已生成；仍需集中外部验证");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const download = async (item: ReleaseCandidate) => {
+    try {
+      const blob = await api.downloadArtifact(item.package_artifact_id);
+      saveBlob(blob, "Kongpu-" + item.version + ".zip");
+      notify("交付候选包已下载");
+    } catch (error) {
+      notifyError(error);
+    }
+  };
+
+  const gates = candidate?.manifest.external_validation_gates || review?.external_validation_gates || [];
+  return <ProjectPage kicker="P09 · DELIVERY CANDIDATE" title="交付候选包" description="把当前通过自动审核的 Commit、参考模拟与证据打成确定性不可变 ZIP；这不是正式发布或厂商通过。">
+    {!runs.data?.length ? <EmptyState title="尚无程序生成任务" text="先在 P06 生成程序，在 P07 完成自动审核，并在 P08 运行参考模拟。" /> : <>
+      <div className="verification-toolbar release-toolbar"><label>生成任务<select value={selectedRunId} onChange={(event) => setRunId(event.target.value)}>{runs.data.map((item) => <option value={item.id} key={item.id}>{item.generator_version} · {formatTime(item.updated_at)}</option>)}</select></label><button className="button button--primary" disabled={busy || !run} onClick={createCandidate}><DownloadSimple size={16} />{busy ? "生成中…" : candidate ? "校验并复用候选包" : "生成交付候选包"}</button></div>
+      <div className="release-workbench"><section className="panel release-readiness"><div className="panel__header"><div><h3>自动交付门禁</h3><p>所有检查都绑定当前程序 Commit</p></div><Status value={candidate?.status || "待生成"} /></div><div className="readiness-list"><ReleaseGate label="当前 Commit 自动审核" ready={review?.status === "passed"} value={review?.status || "尚无报告"} /><ReleaseGate label="控谱参考逻辑模拟" ready={Boolean(simulation)} value={simulation?.status || "尚未运行"} /><ReleaseGate label="分支与不可变哈希" ready={Boolean(candidate)} value={candidate ? "已在后端校验" : "生成时校验"} /><ReleaseGate label="厂商/硬件/电气验证" ready={false} value="pending_external" /></div>{candidate ? <div className="candidate-detail"><div className="candidate-detail__head"><span><strong>{candidate.version}</strong><small>{candidate.verification_level} · {formatTime(candidate.created_at)}</small></span><button className="button button--outline" onClick={() => download(candidate)}><DownloadSimple size={16} />下载 ZIP</button></div><dl><dt>Program Commit</dt><dd><code>{candidate.program_commit_id}</code></dd><dt>Manifest SHA-256</dt><dd><code>{candidate.manifest_hash}</code></dd><dt>ZIP SHA-256</dt><dd><code>{candidate.package_sha256}</code></dd><dt>包内文件</dt><dd>{candidate.manifest.entries.length} 项 · {candidate.package_size_bytes} bytes</dd></dl><div className="review-claim"><Info size={17} /><span>{candidate.manifest.claim_boundary}</span></div></div> : <EmptyState title="尚未形成候选包" text="后端会检查分支无未提交修改、最新 Commit 自动审核、静态审计和参考模拟。" />}</section>
+      <aside className="panel external-gates release-gates"><div className="external-gates__title"><WarningCircle size={17} /><span><strong>集中外部验证门</strong><small>不会由自动打包升级为通过</small></span></div>{gates.map((gate) => <article key={gate.id}><span><strong>{gate.title}</strong><small>{gate.required_evidence}</small></span><Status value={gate.status} /></article>)}{!gates.length && <EmptyState title="等待自动审核" text="生成程序后会建立五项外部验证门。" />}</aside></div>
+      {Boolean(candidates.data?.length) && <section className="panel candidate-history"><div className="panel__header"><div><h3>历史候选包</h3><p>旧包不可覆盖，相同输入自动复用</p></div></div>{candidates.data?.map((item) => <div className="candidate-row" key={item.id}><span><strong>{item.version}</strong><small>{formatTime(item.created_at)} · {item.program_commit_id.slice(0, 12)}</small></span><code>{item.manifest_hash.slice(0, 16)}</code><Status value={item.status} /><button onClick={() => download(item)} aria-label={"下载 " + item.version}><DownloadSimple size={16} /></button></div>)}</section>}
+    </>}
+  </ProjectPage>;
+}
+
+function ReleaseGate({ label, ready, value }: { label: string; ready: boolean; value: string }) {
+  return <div><span className={ready ? "gate-icon gate-icon--ready" : "gate-icon"}>{ready ? <Check size={14} /> : <WarningCircle size={14} />}</span><strong>{label}</strong><Status value={value} /></div>;
+}
+
+function MonitoringPage() {
+  const queryClient = useQueryClient();
+  const { projectId } = useProjectContext();
+  const candidates = useQuery({ queryKey: ["release-candidates", projectId], queryFn: () => api.listReleaseCandidates(projectId) });
+  const plans = useQuery({ queryKey: ["monitoring-plans", projectId], queryFn: () => api.listMonitoringPlans(projectId) });
+  const [candidateId, setCandidateId] = useState("");
+  const [values, setValues] = useState("{}");
+  const [stepId, setStepId] = useState("");
+  const [note, setNote] = useState("离线导入的只读变量快照");
+  const [busy, setBusy] = useState(false);
+  const selectedCandidateId = candidateId || candidates.data?.[0]?.id || "";
+  const candidate = candidates.data?.find((item) => item.id === selectedCandidateId);
+  const plan = plans.data?.find((item) => item.release_candidate_id === selectedCandidateId);
+  const evidence = useQuery({ queryKey: ["monitoring-evidence", plan?.id], queryFn: () => api.listMonitoringEvidence(plan!.id), enabled: Boolean(plan?.id) });
+
+  const createPlan = async () => {
+    if (!candidate) return;
+    setBusy(true);
+    try {
+      const result = await api.createMonitoringPlan(projectId, candidate.id, candidate.revision);
+      await queryClient.invalidateQueries({ queryKey: ["monitoring-plans", projectId] });
+      notify(result.reused ? "已复用该候选包的只读监控计划" : "只读监控准备计划已创建；尚未连接 PLC");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const recordSnapshot = async () => {
+    if (!plan) return;
+    setBusy(true);
+    try {
+      const parsed = JSON.parse(values) as Record<string, boolean | number>;
+      await api.createMonitoringSnapshot(plan, parsed, stepId, note);
+      await queryClient.invalidateQueries({ queryKey: ["monitoring-plans", projectId] });
+      await queryClient.invalidateQueries({ queryKey: ["monitoring-evidence", plan.id] });
+      notify("离线快照已按 SHA-256 保存，验证等级保持 manual_unverified");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createTask = async (item: MonitoringEvidence) => {
+    if (!plan) return;
+    setBusy(true);
+    try {
+      await api.createCommissioningTask(item.id, "根据离线证据检查等待条件，不连接或写入 PLC", plan.revision);
+      await queryClient.invalidateQueries({ queryKey: ["monitoring-plans", projectId] });
+      await queryClient.invalidateQueries({ queryKey: ["monitoring-evidence", plan.id] });
+      await queryClient.invalidateQueries({ queryKey: ["branches", projectId] });
+      await queryClient.invalidateQueries({ queryKey: ["runs", projectId] });
+      notify("已从候选 Commit 创建独立调试分支，发布历史未改写");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <ProjectPage kicker="P10 · READ-ONLY MONITORING PREP" title="只读监控准备" description="只整理离线变量快照、等待条件和证据；当前未连接 PLC，不读取实时值，也不支持下载、RUN/STOP 或强制输出。">
+    {!candidates.data?.length ? <EmptyState title="尚无交付候选包" text="先在 P09 生成绑定当前 Commit 的不可变候选包。" /> : <>
+      <div className="monitor-boundary"><WarningCircle size={20} /><span><strong>未连接 PLC · 未验证</strong>此工作台只接受用户导入的离线 JSON 快照，不保存连接凭据，不执行任何在线写入。</span></div>
+      <div className="verification-toolbar release-toolbar"><label>交付候选<select value={selectedCandidateId} onChange={(event) => setCandidateId(event.target.value)}>{candidates.data.map((item) => <option key={item.id} value={item.id}>{item.version} · {item.manifest_hash.slice(0, 12)}</option>)}</select></label><button className="button button--primary" disabled={busy || !candidate} onClick={createPlan}><Pulse size={16} />{plan ? "校验并复用只读计划" : "创建只读监控计划"}</button></div>
+      {plan ? <div className="monitoring-workbench"><section className="panel monitoring-input"><div className="panel__header"><div><h3>离线快照导入</h3><p>变量白名单来自候选 Control IR</p></div><Status value={plan.verification_level} /></div><dl className="fingerprints"><dt>目标指纹</dt><dd><code>{plan.target_fingerprint}</code></dd><dt>变量映射</dt><dd><code>{plan.variable_map_hash}</code></dd><dt>访问权限</dt><dd>{plan.access}</dd></dl><label>当前工步 ID（可选）<input value={stepId} onChange={(event) => setStepId(event.target.value)} placeholder="例如 STEP_001" /></label><label>离线变量 JSON<textarea value={values} onChange={(event) => setValues(event.target.value)} spellCheck={false} /></label><label>证据说明<input value={note} onChange={(event) => setNote(event.target.value)} /></label><button className="button button--primary" disabled={busy} onClick={recordSnapshot}><UploadSimple size={16} />保存离线快照</button><div className="variable-map"><strong>只读变量映射（{plan.variable_map.length}）</strong>{plan.variable_map.slice(0, 12).map((item) => <span key={item.name}><code>{item.name}</code><small>{item.address || "-"} · {item.data_type || "-"} · {item.access}</small></span>)}</div></section><aside className="panel evidence-list"><div className="panel__header"><div><h3>不可变证据</h3><p>{plan.evidence_count} 条 · manual_unverified</p></div></div>{evidence.data?.map((item) => <article key={item.id}><div><Status value={item.status} /><code>{item.artifact_sha256.slice(0, 16)}</code></div><strong>{item.analysis.waiting_condition || "未指定等待条件"}</strong><small>采集变量 {item.analysis.captured_variable_count} · 缺失 {item.analysis.missing_condition_values.length}</small><p>{item.analysis.claim_boundary}</p><button className="button button--outline" disabled={busy || Boolean(item.commissioning_task_id)} onClick={() => createTask(item)}><GitBranch size={15} />{item.commissioning_task_id ? "已创建调试分支" : "创建独立调试分支"}</button></article>)}{!evidence.data?.length && <EmptyState title="尚无离线证据" text="输入只读变量 JSON 后保存快照。" />}</aside></div> : <EmptyState title="尚未创建监控准备计划" text="计划会绑定候选 Manifest、PLC 目标和只读变量映射哈希。" action={<button className="button button--primary" onClick={createPlan}>创建只读计划</button>} />}
+    </>}
+  </ProjectPage>;
 }
 
 function CompilePage() {
@@ -250,7 +378,7 @@ function CompilePage() {
   const evidenceRef = useRef<HTMLInputElement>(null); const [busy, setBusy] = useState(false);
   const review = automatedReviews.data?.find((item) => item.generation_run_id === selectedRunId) || null;
   const runAutomatedReview = async () => { if (!selectedRunId) return; const selectedRun = runs.data?.find((item) => item.id === selectedRunId); if (!selectedRun) return; setBusy(true); try { const result = await api.createAutomatedReview(projectId, selectedRunId, 20, selectedRun.revision); await queryClient.invalidateQueries({ queryKey: ["automated-reviews", projectId] }); notify(result.reused ? "自动审核输入未变化，已复用不可变报告" : "项目自动审核已完成并保存不可变报告"); } catch (error) { notifyError(error); } finally { setBusy(false); } };
-  const persistedCompileRun = compileRuns.data?.find((item) => item.generation_run_id === selectedRunId) || null;
+  const persistedCompileRun = compileRuns.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === review?.program_commit_id) || null;
   const activeCompileRun = compileRun || persistedCompileRun;
   const prepareCompile = async () => { if (!selectedRunId) return; const selectedRun = runs.data?.find((item) => item.id === selectedRunId); if (!selectedRun) return; setBusy(true); try { const result = await api.createCompileRun(projectId, selectedRunId, adapterId, selectedRun.revision); setCompileRun(result); await queryClient.invalidateQueries({ queryKey: ["compile-runs", projectId] }); notify("已创建厂商编译准备任务，当前仍为未验证"); } catch (error) { notifyError(error); } finally { setBusy(false); } };
   const uploadEvidence = async (file?: File) => { if (!file || !activeCompileRun) return; setBusy(true); try { const result = await api.uploadCompileEvidence(activeCompileRun.id, file, "vendor_report", activeCompileRun.revision); setCompileRun(result.compile_run); await queryClient.invalidateQueries({ queryKey: ["compile-runs", projectId] }); notify("外部证据已按哈希保存，验证等级保持 manual_unverified"); } catch (error) { notifyError(error); } finally { setBusy(false); if (evidenceRef.current) evidenceRef.current.value = ""; } };
@@ -266,9 +394,11 @@ function StatusCheck({ status }: { status: AutomatedReviewRun["checks"][number][
 
 function SimulationPage() {
   const queryClient = useQueryClient(); const { projectId } = useProjectContext(); const runs = useQuery({ queryKey: ["runs", projectId], queryFn: () => api.listRuns(projectId) });
+  const reviews = useQuery({ queryKey: ["automated-reviews", projectId], queryFn: () => api.listAutomatedReviews(projectId) });
   const simulationRuns = useQuery({ queryKey: ["simulation-runs", projectId], queryFn: () => api.listSimulationRuns(projectId) });
   const [runId, setRunId] = useState(""); const selectedRunId = runId || runs.data?.[0]?.id || ""; const [maxCycles, setMaxCycles] = useState(100); const [overrides, setOverrides] = useState("{}"); const [simulation, setSimulation] = useState<SimulationRun | null>(null); const [busy, setBusy] = useState(false);
-  const persistedSimulation = simulationRuns.data?.find((item) => item.generation_run_id === selectedRunId) || null;
+  const currentReview = reviews.data?.find((item) => item.generation_run_id === selectedRunId);
+  const persistedSimulation = simulationRuns.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === currentReview?.program_commit_id) || null;
   const activeSimulation = simulation || persistedSimulation;
   const trace = useQuery({ queryKey: ["simulation-trace", activeSimulation?.id], queryFn: () => api.getSimulationTrace(activeSimulation!.id), enabled: Boolean(activeSimulation?.id) });
   const runSimulation = async () => { if (!selectedRunId) return; const selectedRun = runs.data?.find((item) => item.id === selectedRunId); if (!selectedRun) return; setBusy(true); try { const parsed = JSON.parse(overrides) as Record<string, boolean | number>; const result = await api.createSimulationRun(projectId, selectedRunId, parsed, maxCycles, selectedRun.revision); setSimulation(result); await queryClient.invalidateQueries({ queryKey: ["simulation-runs", projectId] }); notify("控谱参考逻辑模拟已完成；不等同于 GX Simulator3"); } catch (error) { notifyError(error); } finally { setBusy(false); } };

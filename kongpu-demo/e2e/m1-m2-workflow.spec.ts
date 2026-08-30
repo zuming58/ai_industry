@@ -71,6 +71,8 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText("已生成确定性 FX5U ST 骨架和 TestSpec")).toBeVisible();
   await expect(page.getByRole("heading", { name: "程序树" })).toBeVisible();
   const editor = page.locator(".code-editor");
+  await expect(editor).toHaveValue(/PROGRAM PRG_AutoCycle/);
+  await expect(editor).toHaveAttribute("aria-readonly", "false");
   await editor.fill(`${await editor.inputValue()}\n// E2E reviewed change.\n`);
   await page.locator(".code-panel__header").getByRole("button", { name: "保存" }).click();
   await expect(page.getByText("文件已保存到工作分支，尚未提交")).toBeVisible();
@@ -114,6 +116,42 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText(/TestSpec 用例：/)).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
+  await page.getByRole("link", { name: "P09 发布" }).click();
+  await expect(page.getByRole("heading", { name: "交付候选包" })).toBeVisible();
+  await page.getByRole("button", { name: "生成交付候选包" }).click();
+  await expect(page.getByText("交付候选包已生成；仍需集中外部验证")).toBeVisible();
+  await expect(page.getByText("external_validation_required").first()).toBeVisible();
+  await expect(page.getByText("automatic_package")).toBeVisible();
+  await expect(page.getByText("集中外部验证门")).toBeVisible();
+  await expect(page.getByText("GX Works3 导入与 Rebuild All")).toBeVisible();
+  const candidateDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载 ZIP" }).click();
+  const candidateArchive = await candidateDownload;
+  expect(await candidateArchive.path()).toBeTruthy();
+  await page.getByRole("button", { name: "校验并复用候选包" }).click();
+  await expect(page.getByText("不可变输入未变化，已复用交付候选包")).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("RC-0001").first()).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  await page.getByRole("link", { name: "P10 监控" }).click();
+  await expect(page.getByRole("heading", { name: "只读监控准备" })).toBeVisible();
+  await expect(page.getByText("未连接 PLC · 未验证")).toBeVisible();
+  await page.getByRole("button", { name: "创建只读监控计划" }).click();
+  await expect(page.getByText("只读监控准备计划已创建；尚未连接 PLC")).toBeVisible();
+  await expect(page.getByText(/只读变量映射/)).toBeVisible();
+  await page.getByLabel("离线变量 JSON").fill("{}");
+  await page.getByRole("button", { name: "保存离线快照" }).click();
+  await expect(page.getByText("离线快照已按 SHA-256 保存，验证等级保持 manual_unverified")).toBeVisible();
+  await expect(page.getByText("未指定等待条件")).toBeVisible();
+  await page.getByRole("button", { name: "创建独立调试分支" }).click();
+  await expect(page.getByText("已从候选 Commit 创建独立调试分支，发布历史未改写")).toBeVisible();
+  await expect(page.getByRole("button", { name: "已创建调试分支" })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByText("未连接 PLC · 未验证")).toBeVisible();
+  await expect(page.getByRole("button", { name: "已创建调试分支" })).toBeDisabled();
+  await expectNoHorizontalOverflow(page);
+
   await page.getByRole("link", { name: "P11 版本" }).click();
   await page.getByRole("button", { name: /E2E review generated program/ }).click();
   await expect(page.locator(".diff-panel")).toContainText("E2E reviewed change");
@@ -122,7 +160,7 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 768 });
   const projectUrl = new URL(page.url());
   const projectId = projectUrl.pathname.split("/")[2];
-  for (const route of ["templates", "imports", "review", "program", "compile", "simulation", "versions"]) {
+  for (const route of ["templates", "imports", "review", "program", "compile", "simulation", "release", "monitor", "versions"]) {
     await page.goto(`/projects/${projectId}/${route}`);
     await expect(page.locator("main")).toBeVisible();
     await expectNoHorizontalOverflow(page);
