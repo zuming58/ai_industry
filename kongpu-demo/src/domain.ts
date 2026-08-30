@@ -429,4 +429,29 @@ export type CommissioningTask = {
   updated_at: string;
 };
 
+export type ProjectTimelineEvent = {
+  id: string;
+  event_type: string;
+  entity_type: string;
+  entity_id: string;
+  title: string;
+  detail: string;
+  occurred_at: string;
+  author: string;
+  request: string;
+  tool: string;
+  status: string;
+  verification_level: string;
+  source: Record<string, unknown>;
+  payload: Record<string, unknown>;
+};
+
+export type ProjectTimeline = {
+  schema: "kongpu-project-timeline/v1";
+  project_id: string;
+  events: ProjectTimelineEvent[];
+  summary: { total: number; by_type: Record<string, number>; latest_event_at?: string | null };
+  claim_boundary: string;
+};
+
 export type ApiError = { code?: string; message?: string; action?: string; location?: unknown };

@@ -356,3 +356,21 @@ def test_commit_comparison_rejects_cross_project_access(
     )
     assert response.status_code == 409, response.text
     assert response.json()["code"] == "COMMIT_PROJECT_MISMATCH"
+
+
+def test_project_timeline_is_project_scoped_sorted_and_explicit_about_boundaries(
+    client: TestClient, project: dict, locked_example: dict
+) -> None:
+    run = _generate(client, project, locked_example, "generated/timeline")
+    response = client.get(f"/api/v1/projects/{project['id']}/timeline")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["schema"] == "kongpu-project-timeline/v1"
+    assert payload["project_id"] == project["id"]
+    assert payload["summary"]["total"] == len(payload["events"])
+    assert payload["events"]
+    occurred = [item["occurred_at"] for item in payload["events"]]
+    assert occurred == sorted(occurred, reverse=True)
+    assert any(item["entity_type"] == "GenerationRun" and item["entity_id"] == run["id"] for item in payload["events"])
+    assert any(item["event_type"] == "audit" for item in payload["events"])
+    assert "GX Works3" in payload["claim_boundary"]

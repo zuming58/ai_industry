@@ -2434,6 +2434,401 @@ def machine_spec_schema() -> dict[str, Any]:
     return MachineSpec.model_json_schema()
 
 
+def _timeline_event(
+    event_type: str,
+    entity_type: str,
+    entity_id: str,
+    title: str,
+    occurred_at: datetime,
+    *,
+    detail: str = "",
+    author: str = "本机工程师",
+    request: str = "系统记录",
+    tool: str = "控谱本机",
+    status: str = "recorded",
+    verification_level: str = "not_applicable",
+    source: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": f"{event_type}:{entity_type}:{entity_id}",
+        "event_type": event_type,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "title": title,
+        "detail": detail,
+        "occurred_at": occurred_at.isoformat(),
+        "author": author or "本机工程师",
+        "request": request or "系统记录",
+        "tool": tool or "控谱本机",
+        "status": status,
+        "verification_level": verification_level,
+        "source": source or {},
+        "payload": payload or {},
+    }
+
+
+def project_timeline(session: Session, project_id: str) -> dict[str, Any]:
+    """Build a deterministic read-only timeline from immutable project records."""
+    require_project(session, project_id)
+    events: list[dict[str, Any]] = []
+
+    def add(*args: Any, **kwargs: Any) -> None:
+        events.append(_timeline_event(*args, **kwargs))
+
+    action_titles = {
+        "project.created": "项目已创建",
+        "project.updated": "项目配置已更新",
+        "project.archived": "项目已归档",
+        "project.restored": "项目已恢复",
+        "template.downloaded": "模板已下载",
+        "import.created": "Excel 已导入",
+        "import.validated": "Excel 已完成校验",
+        "import.failed": "Excel 导入失败",
+        "spec.edited": "MachineSpec 已修订",
+        "spec.view_confirmed": "审阅视图已确认",
+        "spec.warning_accepted": "Warning 已接受",
+        "spec.locked": "MachineSpec 已锁定",
+        "program.generated": "程序骨架已生成",
+        "program.branch_created": "程序分支已创建",
+        "program.file_updated": "程序文件已修改",
+        "program.committed": "程序 Commit 已创建",
+        "program.audit_completed": "生成物静态审计已完成",
+        "program.automated_review_completed": "项目自动审核已完成",
+        "compile.manual_required": "编译准备需要厂商工具",
+        "compile.evidence_uploaded": "编译证据已导入",
+        "simulation.reference_completed": "参考逻辑模拟已完成",
+        "release.candidate_created": "交付候选包已生成",
+        "release.candidate_verified": "候选包完整性已复核",
+        "monitoring.plan_created": "只读监控计划已创建",
+        "monitoring.snapshot_recorded": "离线现场快照已记录",
+        "commissioning.task_created": "工程师调试任务已创建",
+    }
+    audit_rows = session.scalars(
+        select(AuditEvent)
+        .where(AuditEvent.project_id == project_id)
+        .order_by(AuditEvent.created_at)
+    ).all()
+    for row in audit_rows:
+        try:
+            payload = json.loads(row.payload_json)
+        except json.JSONDecodeError:
+            payload = {}
+        status = str(payload.get("status") or payload.get("state") or "recorded")
+        verification = str(payload.get("verification_level") or "not_applicable")
+        detail = str(payload.get("reason") or payload.get("message") or row.action)
+        add(
+            "audit",
+            row.entity_type,
+            row.id,
+            action_titles.get(row.action, row.action),
+            row.created_at,
+            detail=detail,
+            author=row.actor,
+            request=str(payload.get("reason") or row.action),
+            tool=str(payload.get("tool") or "控谱本机"),
+            status=status,
+            verification_level=verification,
+            source={"entity_type": row.entity_type, "entity_id": row.entity_id},
+            payload=payload,
+        )
+
+    revisions = session.scalars(
+        select(MachineSpecRevision)
+        .where(MachineSpecRevision.project_id == project_id)
+        .order_by(MachineSpecRevision.created_at)
+    ).all()
+    for row in revisions:
+        add(
+            "spec",
+            "MachineSpecRevision",
+            row.id,
+            f"MachineSpec Revision {row.sequence}",
+            row.created_at,
+            detail=f"{row.status} · SHA-256 {row.content_hash[:12]}",
+            author="控谱校验器",
+            request="Excel 导入或页面修订",
+            tool="MachineSpec 确定性校验",
+            status=row.status,
+            verification_level="automatic",
+            source={"page": "review", "revision_id": row.id, "import_id": row.import_id},
+            payload={"sequence": row.sequence, "content_hash": row.content_hash},
+        )
+
+    workspace = session.scalar(
+        select(ProgramWorkspace).where(ProgramWorkspace.project_id == project_id)
+    )
+    if workspace is not None:
+        commits = session.scalars(
+            select(ProgramCommit)
+            .join(ProgramBranch, ProgramCommit.branch_id == ProgramBranch.id)
+            .where(ProgramBranch.workspace_id == workspace.id)
+            .order_by(ProgramCommit.created_at)
+        ).all()
+        for row in commits:
+            branch = session.get(ProgramBranch, row.branch_id)
+            add(
+                "code",
+                "ProgramCommit",
+                row.id,
+                f"Commit · {row.message}",
+                row.created_at,
+                detail=f"{row.git_sha[:12]} · {branch.name if branch else '未知分支'}",
+                author=row.author,
+                request=row.message,
+                tool="本地 Git",
+                status="committed",
+                verification_level="not_applicable",
+                source={"page": "versions", "commit_id": row.id, "branch_id": row.branch_id},
+                payload={"git_sha": row.git_sha, "machine_spec_revision_id": row.machine_spec_revision_id},
+            )
+
+    runs = session.scalars(
+        select(GenerationRun)
+        .where(GenerationRun.project_id == project_id)
+        .order_by(GenerationRun.created_at)
+    ).all()
+    for row in runs:
+        add(
+            "code",
+            "GenerationRun",
+            row.id,
+            "确定性程序生成",
+            row.created_at,
+            detail=f"{row.generator_version} · {row.status}",
+            author="控谱生成器",
+            request="从锁定 MachineSpec 生成",
+            tool="FX5U Structured Text 生成器",
+            status=row.status,
+            verification_level="automatic",
+            source={"page": "program", "generation_run_id": row.id},
+            payload={"generator_version": row.generator_version, "branch_id": row.branch_id},
+        )
+
+    reviews = session.scalars(
+        select(AutomatedReviewRun)
+        .where(AutomatedReviewRun.project_id == project_id)
+        .order_by(AutomatedReviewRun.created_at)
+    ).all()
+    for row in reviews:
+        add(
+            "review",
+            "AutomatedReviewRun",
+            row.id,
+            "项目自动审核",
+            row.created_at,
+            detail=f"{row.status} · 重复 {row.repeat_count} 次",
+            author="控谱自动审核器",
+            request="生成后确定性审核",
+            tool="Automated Review v1",
+            status=row.status,
+            verification_level=row.verification_level,
+            source={"page": "compile", "review_id": row.id, "program_commit_id": row.program_commit_id},
+            payload={"input_hash": row.input_hash, "review_version": row.review_version},
+        )
+
+    generation_audits = session.scalars(
+        select(GenerationAudit)
+        .join(GenerationRun, GenerationAudit.generation_run_id == GenerationRun.id)
+        .where(GenerationRun.project_id == project_id)
+        .order_by(GenerationAudit.created_at)
+    ).all()
+    for row in generation_audits:
+        add(
+            "review",
+            "GenerationAudit",
+            row.id,
+            "生成物静态审计",
+            row.created_at,
+            detail=f"{row.status} · {row.audit_version}",
+            author="控谱审计器",
+            request="检查 ST、Control IR 和来源追溯",
+            tool="Generation Audit v1",
+            status=row.status,
+            verification_level="automatic",
+            source={"page": "compile", "audit_id": row.id, "program_commit_id": row.program_commit_id},
+            payload={"input_hash": row.input_hash, "program_commit_id": row.program_commit_id},
+        )
+
+    compile_runs = session.scalars(
+        select(CompileRun)
+        .where(CompileRun.project_id == project_id)
+        .order_by(CompileRun.created_at)
+    ).all()
+    for row in compile_runs:
+        add(
+            "compile",
+            "CompileRun",
+            row.id,
+            "编译准备任务",
+            row.created_at,
+            detail=f"{row.adapter_id} · {row.status}",
+            author="控谱编译适配层",
+            request="准备厂商工具导入",
+            tool=row.adapter_id,
+            status=row.status,
+            verification_level=row.verification_level,
+            source={"page": "compile", "compile_run_id": row.id, "program_commit_id": row.program_commit_id},
+            payload={"adapter_id": row.adapter_id, "failure_reason": row.failure_reason},
+        )
+
+    evidence_rows = session.scalars(
+        select(EvidenceArtifact)
+        .where(EvidenceArtifact.project_id == project_id)
+        .order_by(EvidenceArtifact.created_at)
+    ).all()
+    for row in evidence_rows:
+        artifact = session.get(SourceArtifact, row.source_artifact_id)
+        add(
+            "field_evidence",
+            "EvidenceArtifact",
+            row.id,
+            f"证据 · {row.evidence_kind}",
+            row.created_at,
+            detail=f"{artifact.original_name if artifact else '未知文件'} · {artifact.sha256[:12] if artifact else '-'}",
+            author="本机工程师",
+            request="导入外部或离线证据",
+            tool="内容寻址工件库",
+            status="recorded",
+            verification_level=row.verification_level,
+            source={"page": "compile", "evidence_id": row.id, "compile_run_id": row.compile_run_id, "simulation_run_id": row.simulation_run_id},
+            payload={"evidence_kind": row.evidence_kind, "source_artifact_id": row.source_artifact_id},
+        )
+
+    simulations = session.scalars(
+        select(SimulationRun)
+        .where(SimulationRun.project_id == project_id)
+        .order_by(SimulationRun.created_at)
+    ).all()
+    for row in simulations:
+        add(
+            "simulation",
+            "SimulationRun",
+            row.id,
+            "控谱参考逻辑模拟",
+            row.created_at,
+            detail=f"{row.engine_version} · {row.status}",
+            author="控谱参考执行器",
+            request="执行受限 TestSpec DSL",
+            tool=row.engine_version,
+            status=row.status,
+            verification_level=row.verification_level,
+            source={"page": "simulation", "simulation_run_id": row.id, "program_commit_id": row.program_commit_id},
+            payload={"test_spec_revision_id": row.test_spec_revision_id, "trace_artifact_id": row.trace_artifact_id},
+        )
+
+    candidates = session.scalars(
+        select(ReleaseCandidate)
+        .where(ReleaseCandidate.project_id == project_id)
+        .order_by(ReleaseCandidate.created_at)
+    ).all()
+    for row in candidates:
+        add(
+            "release",
+            "ReleaseCandidate",
+            row.id,
+            f"交付候选包 {row.version}",
+            row.created_at,
+            detail=f"{row.status} · {row.manifest_hash[:12]}",
+            author="控谱交付打包器",
+            request="生成不可变候选 ZIP",
+            tool="Delivery Candidate v1",
+            status=row.status,
+            verification_level=row.verification_level,
+            source={"page": "release", "candidate_id": row.id, "program_commit_id": row.program_commit_id},
+            payload={"version": row.version, "input_hash": row.input_hash, "package_artifact_id": row.package_artifact_id},
+        )
+
+    acceptances = session.scalars(
+        select(ProjectAcceptanceRun)
+        .where(ProjectAcceptanceRun.project_id == project_id)
+        .order_by(ProjectAcceptanceRun.created_at)
+    ).all()
+    for row in acceptances:
+        add(
+            "release",
+            "ProjectAcceptanceRun",
+            row.id,
+            "项目自动验收",
+            row.created_at,
+            detail=f"{row.status} · {row.verification_level}",
+            author="控谱验收汇总器",
+            request="汇总当前 Commit 的自动验证证据",
+            tool="Project Acceptance v1",
+            status=row.status,
+            verification_level=row.verification_level,
+            source={"page": "release", "acceptance_id": row.id, "program_commit_id": row.program_commit_id},
+            payload={"input_hash": row.input_hash, "release_candidate_id": row.release_candidate_id},
+        )
+
+    environments = session.scalars(
+        select(AdapterEnvironment)
+        .where(AdapterEnvironment.project_id == project_id)
+        .order_by(AdapterEnvironment.created_at)
+    ).all()
+    for row in environments:
+        add(
+            "environment",
+            "AdapterEnvironment",
+            row.id,
+            f"环境快照 · {row.adapter_id}",
+            row.created_at,
+            detail=f"{row.status} · {row.adapter_version}",
+            author="控谱环境检测器",
+            request="只读检测本机工具环境",
+            tool=row.adapter_id,
+            status=row.status,
+            verification_level=row.verification_level,
+            source={"page": "settings", "environment_id": row.id, "adapter_id": row.adapter_id},
+            payload={"fingerprint": row.fingerprint},
+        )
+
+    monitoring_rows = session.scalars(
+        select(MonitoringEvidence)
+        .where(MonitoringEvidence.project_id == project_id)
+        .order_by(MonitoringEvidence.created_at)
+    ).all()
+    for row in monitoring_rows:
+        add(
+            "field_evidence",
+            "MonitoringEvidence",
+            row.id,
+            "离线现场快照",
+            row.created_at,
+            detail=f"{row.status} · {row.verification_level}",
+            author="本机工程师",
+            request="保存离线变量快照",
+            tool="只读监控准备",
+            status=row.status,
+            verification_level=row.verification_level,
+            source={"page": "monitor", "evidence_id": row.id, "monitoring_plan_id": row.monitoring_plan_id},
+            payload={"source_artifact_id": row.source_artifact_id},
+        )
+
+    def sort_key(item: dict[str, Any]) -> tuple[str, str]:
+        return (item["occurred_at"], item["id"])
+
+    events.sort(key=sort_key, reverse=True)
+    type_summary: dict[str, int] = {}
+    for item in events:
+        type_summary[item["event_type"]] = type_summary.get(item["event_type"], 0) + 1
+    return {
+        "schema": "kongpu-project-timeline/v1",
+        "project_id": project_id,
+        "events": events,
+        "summary": {"total": len(events), "by_type": type_summary, "latest_event_at": events[0]["occurred_at"] if events else None},
+        "claim_boundary": "时间线只聚合本机 SQLite 中已有的不可变记录和审计事件；厂商二进制工程、真实 GX Works3 编译、GX Simulator3、FX5U 硬件和电气工程师确认未验证。",
+    }
+
+
+@router.get("/api/v1/projects/{project_id}/timeline")
+def get_project_timeline(
+    project_id: str,
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    return project_timeline(session, project_id)
+
+
 @router.get("/api/v1/projects")
 def list_projects(
     include_archived: bool = False,
