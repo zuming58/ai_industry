@@ -41,6 +41,7 @@ from .monitoring import (
     MonitoringInputError, analyze_snapshot, build_variable_map,
     target_fingerprint, variable_map_hash,
 )
+from .readiness import build_readiness_report
 from .models import (
     AdapterEnvironment, AuditEvent, AutomatedReviewRun, CompileRun,
     CommissioningTask, ControlIRRevision, EvidenceArtifact,
@@ -710,6 +711,69 @@ def release_candidate_dict(session: Session, item: ReleaseCandidate) -> dict[str
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
+
+
+def _readiness_for_run(
+    session: Session, project: Project, run: GenerationRun
+) -> dict[str, Any]:
+    revision = session.get(MachineSpecRevision, run.spec_revision_id)
+    locked = session.scalar(
+        select(LockedMachineSpec).where(
+            LockedMachineSpec.spec_revision_id == run.spec_revision_id
+        )
+    )
+    branch = session.get(ProgramBranch, run.branch_id) if run.branch_id else None
+    commit = session.scalar(
+        select(ProgramCommit).where(
+            ProgramCommit.branch_id == branch.id,
+            ProgramCommit.git_sha == branch.head_commit,
+        )
+    ) if branch and branch.head_commit else None
+    review = session.scalar(
+        select(AutomatedReviewRun).where(
+            AutomatedReviewRun.generation_run_id == run.id,
+            AutomatedReviewRun.program_commit_id == commit.id if commit else False,
+        ).order_by(AutomatedReviewRun.created_at.desc())
+    )
+    audit_item = session.scalar(
+        select(GenerationAudit).where(
+            GenerationAudit.generation_run_id == run.id,
+            GenerationAudit.program_commit_id == commit.id if commit else False,
+        ).order_by(GenerationAudit.created_at.desc())
+    )
+    simulation = session.scalar(
+        select(SimulationRun).where(
+            SimulationRun.generation_run_id == run.id,
+            SimulationRun.program_commit_id == commit.id if commit else False,
+        ).order_by(SimulationRun.created_at.desc())
+    )
+    candidate = session.scalar(
+        select(ReleaseCandidate).where(
+            ReleaseCandidate.generation_run_id == run.id,
+            ReleaseCandidate.program_commit_id == commit.id if commit else False,
+        ).order_by(ReleaseCandidate.created_at.desc())
+    )
+    candidate_verification = None
+    if candidate:
+        candidate_verification = session.scalar(
+            select(ReleaseCandidateVerification).where(
+                ReleaseCandidateVerification.release_candidate_id == candidate.id,
+            ).order_by(ReleaseCandidateVerification.created_at.desc())
+        )
+    spec_data = json.loads(revision.data_json) if revision else {"plc_target": {"brand": project.plc_brand, "series": project.plc_series, "model": project.plc_model}}
+    profile = profile_for_target(spec_data.get("plc_target", {}))
+    return build_readiness_report(
+        project=project_dict(project),
+        target={"profile_id": profile.profile_id, "brand": profile.brand, "series": profile.series, "model": spec_data.get("plc_target", {}).get("model"), "vendor_tool": profile.vendor_tool, "adapter_id": profile.adapter_id},
+        generation_run={"id": run.id, "spec_revision_id": run.spec_revision_id, "locked": bool(locked)},
+        commit={"id": commit.id, "git_sha": commit.git_sha} if commit else None,
+        review={"status": review.status} if review else None,
+        audit={"status": audit_item.status} if audit_item else None,
+        simulation={"status": simulation.status} if simulation else None,
+        candidate={"id": candidate.id} if candidate else None,
+        candidate_verification={"status": candidate_verification.status} if candidate_verification else None,
+        external_gates=external_validation_gates(spec_data),
+    )
 
 
 def candidate_verification_dict(
@@ -1437,7 +1501,6 @@ def compatibility_matrix() -> dict[str, Any]:
 @router.post("/api/v1/adapters/detect")
 def detect_adapter_environment(
     payload: AdapterDetectRequest,
-    runtime_settings: Settings = Depends(app_settings),
     session: Session = Depends(app_session),
 ) -> dict[str, Any]:
     try:
@@ -2034,6 +2097,39 @@ def list_release_candidates(
         .order_by(ReleaseCandidate.created_at.desc())
     ).all()
     return [release_candidate_dict(session, item) for item in items]
+
+
+@router.get("/api/v1/projects/{project_id}/readiness")
+def project_readiness(
+    project_id: str,
+    generation_run_id: str | None = Query(default=None),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    """Return deterministic local gates without upgrading external verification."""
+    project = require_project(session, project_id)
+    run = session.get(GenerationRun, generation_run_id) if generation_run_id else session.scalar(
+        select(GenerationRun)
+        .where(GenerationRun.project_id == project_id)
+        .order_by(GenerationRun.created_at.desc())
+    )
+    if run is not None and run.project_id != project_id:
+        raise api_error("GENERATION_RUN_NOT_FOUND", "生成任务不存在或不属于当前项目", 404)
+    if run is not None:
+        return _readiness_for_run(session, project, run)
+    profile = profile_for_target({"brand": project.plc_brand, "series": project.plc_series, "model": project.plc_model})
+    return build_readiness_report(
+        project=project_dict(project),
+        target={"profile_id": profile.profile_id, "brand": profile.brand, "series": profile.series, "model": project.plc_model, "vendor_tool": profile.vendor_tool, "adapter_id": profile.adapter_id},
+        generation_run=None,
+        commit=None,
+        review=None,
+        audit=None,
+        simulation=None,
+        candidate=None,
+        candidate_verification=None,
+        external_gates=external_validation_gates({"plc_target": {"brand": project.plc_brand, "series": project.plc_series, "model": project.plc_model}}),
+    )
 
 
 @router.get("/api/v1/release-candidates/{candidate_id}")

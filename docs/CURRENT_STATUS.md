@@ -51,6 +51,7 @@ M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”�
 ### P09/P10 交付与监控前置
 
 - P09 生成确定性、不可变的交付候选 ZIP，包含锁定 MachineSpec、原始 Excel、当前 Commit 源码、Control IR、TestSpec、自动审核、静态审计、参考模拟、已导入人工证据，以及与 PLC Profile、规格哈希、Commit、生成器和 TestSpec 哈希绑定的机器可读外部验证包与可填写清单。
+- 新增 P09 只读就绪度预检：逐项汇总锁定规格、当前 Commit、自动审核、静态审计、参考模拟、候选 ZIP 和完整性复核；本机门齐全时标记 `ready_for_external_validation`，外部厂商/硬件/电气门仍保持 `pending_external`。
 - Manifest 对每个条目记录 SHA-256 与大小，ZIP 时间戳固定；相同不可变输入复用原候选，不覆盖历史，篡改、路径穿越、脏工作区或缺少当前 Commit 模拟结果会被阻止。
 - 候选状态固定为 external_validation_required，验证等级固定为 automatic_package。它不是正式发布包，不代表厂商编译、硬件实测或电气工程师确认。
 - 候选包可从内容寻址工件库重新读取并独立复核：校验外层 SHA-256、ZIP 安全路径、重复条目、解压上限、Manifest、逐项大小/哈希和生成任务/Commit 基线。报告不可变，验证等级固定为 automatic_integrity。

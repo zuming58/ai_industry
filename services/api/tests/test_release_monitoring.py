@@ -62,6 +62,60 @@ def test_delivery_zip_is_deterministic_and_rejects_tampering() -> None:
         verify_delivery_candidate(tampered_buffer.getvalue())
 
 
+def test_readiness_reports_automatic_work_without_upgrading_external_gates(
+    client: TestClient, project: dict, locked_example: dict
+) -> None:
+    run = _generated_run(client, project, locked_example, "generated/readiness")
+    before = client.get(
+        f"/api/v1/projects/{project['id']}/readiness",
+        params={"generation_run_id": run["id"]},
+    )
+    assert before.status_code == 200, before.text
+    pending = before.json()
+    assert pending["schema"] == "kongpu-readiness/v1"
+    assert pending["status"] == "automatic_work_remaining"
+    states = {item["id"]: item["status"] for item in pending["checks"]}
+    assert states["locked_spec"] == "ready"
+    assert states["automated_review"] == "ready"
+    assert states["reference_simulation"] == "remaining"
+    assert states["candidate"] == "remaining"
+    assert {item["status"] for item in pending["external_validation_gates"]} == {"pending_external"}
+
+    simulation = client.post(
+        f"/api/v1/projects/{project['id']}/simulation-runs",
+        json={"generation_run_id": run["id"], "expected_generation_revision": run["revision"]},
+    )
+    assert simulation.status_code == 201, simulation.text
+    candidate_response = client.post(
+        f"/api/v1/projects/{project['id']}/release-candidates",
+        json={"generation_run_id": run["id"], "expected_generation_revision": run["revision"]},
+    )
+    assert candidate_response.status_code == 201, candidate_response.text
+    candidate = candidate_response.json()
+    after_candidate = client.get(
+        f"/api/v1/projects/{project['id']}/readiness",
+        params={"generation_run_id": run["id"]},
+    )
+    states = {item["id"]: item["status"] for item in after_candidate.json()["checks"]}
+    assert states["candidate"] == "ready"
+    assert states["candidate_integrity"] == "remaining"
+
+    verified = client.post(
+        f"/api/v1/release-candidates/{candidate['id']}/verify",
+        json={"expected_candidate_revision": candidate["revision"]},
+    )
+    assert verified.status_code == 200, verified.text
+    complete = client.get(
+        f"/api/v1/projects/{project['id']}/readiness",
+        params={"generation_run_id": run["id"]},
+    )
+    ready = complete.json()
+    assert ready["status"] == "ready_for_external_validation"
+    assert ready["verification_level"] == "automatic"
+    assert ready["summary"] == {"total": 8, "ready": 8, "remaining": 0, "external_pending": 5}
+    assert "pending_external" in ready["claim_boundary"]
+
+
 def test_monitoring_identifier_semantics_and_snapshot_validation() -> None:
     ir = {
         "signals": [
