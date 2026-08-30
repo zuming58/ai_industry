@@ -25,9 +25,11 @@
 - P08 运行版本化 TestSpec DSL 的控谱参考逻辑模拟，保存 automatic_reference 结果、用例汇总、周期 Trace 和工件哈希；不得称为 GX Simulator3。
 - P12 只读检测平台、Python、受控环境变量路径和 Adapter 能力；不启动厂商程序、不保存 PLC 写入凭据。
 - P09 生成绑定当前 Commit 的不可变候选 ZIP，Manifest 已记录锁定规格、原始 Excel、Control IR/TestSpec、自动审核、静态审计、参考模拟和人工证据哈希；其状态仍为 external_validation_required。
+- P09 可重新读取候选 ZIP 并形成 automatic_integrity 完整性报告，还可汇总形成 automatic_passed_external_pending 项目自动验收报告；两种报告都不会替代任何集中外部验证项。
 - P10 生成目标指纹与只读变量映射，并接受离线 JSON 快照形成 manual_unverified 证据；当前未连接 PLC。由证据派生的调试工作只进入新的 engineer/commissioning-* 分支。
+- P11 可比较两个明确 Commit，并从历史 Commit 创建 restore/* 独立分支。恢复后的新 GenerationRun 只重新运行自动审核，不继承旧静态审计、参考模拟、候选包或人工/厂商证据。
 
-集中验证时必须记录精确的 Program Commit、MachineSpec 哈希、Control IR/TestSpec 哈希、生成器版本、自动审核 ID/input_hash/report SHA-256、参考模拟引擎版本和外部证据 SHA-256，不能把历史结果复制到新的基线。
+集中验证时必须记录精确的 Program Commit、MachineSpec 哈希、Control IR/TestSpec 哈希、生成器版本、自动审核 ID/input_hash/report SHA-256、候选复核与项目自动验收报告 ID/input_hash/report SHA-256、参考模拟引擎版本和外部证据 SHA-256，不能把历史结果复制到新的基线。
 
 ## 禁止事项
 
@@ -51,6 +53,7 @@
 | V04 | 重复性 | 同一 Commit 连续编译至少 5 次 | 结果一致，不修改原始黄金工程 | 运行台账、哈希 | 待填 |
 | V05 | M3 证据对账 | 对照 P07 的 Commit、自动审核报告、诊断和外部证据哈希 | automatic、manual_unverified 与 pending_external 未被错误升级 | API 导出、报告原件、哈希清单 | 待填 |
 | V06 | 候选包复核 | 解压 P09 候选 ZIP，逐项核对 Manifest、文件哈希、Commit 和工具版本 | 内容完整且哈希一致；仍标记 external_validation_required | 候选 ZIP、Manifest、复核记录 | 待填 |
+| V07 | 自动验收对账 | 对照 P09 ProjectAcceptanceRun、候选复核报告和本次实际工具结果 | automatic_passed_external_pending 未被误记为厂商/硬件/电气通过 | 验收 JSON、报告哈希、差异表 | 待填 |
 
 若 V01 无稳定自动导入接口，记录最小人工导入步骤作为正式降级门，不使用脆弱 UI 自动化伪装成官方能力。
 

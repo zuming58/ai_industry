@@ -39,6 +39,8 @@
 | 提交 | POST /api/v1/branches/{branch_id}/commits |
 | 历史 | GET /api/v1/projects/{project_id}/commits |
 | Commit | GET /api/v1/commits/{commit_id}、diff |
+| Commit 比较 | GET /api/v1/commits/{base_commit_id}/diff/{target_commit_id} |
+| 恢复分支 | POST /api/v1/commits/{commit_id}/restore-branches |
 
 ## M3 前置接口
 
@@ -56,6 +58,9 @@
 | Trace | GET /api/v1/simulation-runs/{run_id}/trace |
 | 交付候选 | POST/GET /api/v1/projects/{project_id}/release-candidates |
 | 候选详情 | GET /api/v1/release-candidates/{candidate_id} |
+| 候选完整性复核 | POST /api/v1/release-candidates/{candidate_id}/verify |
+| 项目自动验收 | POST/GET /api/v1/projects/{project_id}/acceptance-runs |
+| 自动验收详情 | GET /api/v1/acceptance-runs/{acceptance_id} |
 | 只读监控计划 | POST/GET /api/v1/projects/{project_id}/monitoring-plans |
 | 计划详情 | GET /api/v1/monitoring-plans/{plan_id} |
 | 离线快照 | POST /api/v1/monitoring-plans/{plan_id}/snapshots |
@@ -76,9 +81,15 @@ AutomatedReviewRun 以 generation_run_id、review_version 和 input_hash 唯一�
 
 交付候选创建必须绑定当前 GenerationRun、当前分支 head Commit、passed 自动审核、无 blocker 静态审计和当前 Commit 的 review_ready 参考模拟。分支存在未提交修改时返回 409。候选 ZIP 使用固定时间戳和排序条目生成，MANIFEST.json 记录基线、外部验证门、文件 SHA-256 与大小；相同 project_id + input_hash 只复用原候选。状态固定为 external_validation_required，验证等级固定为 automatic_package。
 
+候选完整性复核会重新读取内容寻址 ZIP，并核对外层工件 SHA-256、路径穿越、重复条目、条目数与解压体积上限、包内 Manifest、逐项 SHA-256/大小，以及 GenerationRun/ProgramCommit 基线。相同候选内容只复用原 ReleaseCandidateVerification；验证等级 automatic_integrity 只表示 ZIP 完整性自动验证通过。
+
+ProjectAcceptanceRun 绑定 GenerationRun、当前 ProgramCommit、AutomatedReviewRun、GenerationAudit、SimulationRun，以及可选的 ReleaseCandidateVerification。输入记录包含生成器、审核、审计、参考模拟引擎、TestSpec 和报告工件哈希；相同 project_id + input_hash 复用原报告。状态固定为 automatic_passed_external_pending，所有厂商工具、真实 PLC、安全回路和电气工程师门继续保持 pending_external。
+
 只读监控计划一对一绑定 ReleaseCandidate，变量白名单来自候选 Control IR，每项访问权限固定为 read_only。target_fingerprint 同时绑定项目、PLC 目标、候选 Manifest 和变量映射哈希。快照提交必须携带匹配指纹和 expected_plan_revision，只接受白名单内的 bool/int/float 离线值；证据固定为 manual_unverified。
 
 CommissioningTask 只能由不可变 MonitoringEvidence 创建。系统从候选 ProgramCommit 派生 engineer/commissioning-* 分支，并复制 Control IR、TestSpec、ProgramArtifact 和 TraceLink 基线到新的 GenerationRun；后续修改形成新 Commit 和自动审核，不覆盖候选或来源历史。
+
+Commit 比较只能在同一 ProgramWorkspace 中执行，使用两个明确 Git SHA 直接读取仓库对象，不依赖当前工作树。恢复接口从历史 Commit 创建 restore/* 独立分支、新 GenerationRun 和分支内 ProgramCommit；来源分支 head 不移动，旧审计、模拟、候选和外部证据均不继承，新基线只自动生成独立 AutomatedReviewRun。
 
 ## MachineSpec v1
 
@@ -114,6 +125,8 @@ Excel 工作表：
 - manual_unverified：外部日志、截图和报告已导入但没有集中验证签名。
 - automatic：仅指项目级确定性代码审核已运行并满足其检查范围；不包含厂商工具、真实 PLC 或电气工程师确认。
 - automatic_package：只表示候选 ZIP 已通过本机确定性打包和哈希门禁；不表示正式发布或厂商通过。
+- automatic_integrity：只表示已存候选 ZIP 重新读取后通过结构、Manifest、内容哈希与基线复核；不表示厂商或硬件通过。
+- automatic_passed_external_pending：只表示项目自动门已汇总通过且外部门仍明确待验证；不是最终验收通过。
 - awaiting_external_read_only_connection：只表示已生成未来只读连接所需的计划与指纹；当前没有在线连接。
 - 本机未安装或未配置 GX Works3、GX Simulator3、MX Component 时，API 返回 unavailable 或 manual_required，不猜测版本、不执行任意命令。
 - 详见 Adapter 安全与依赖矩阵文档。
