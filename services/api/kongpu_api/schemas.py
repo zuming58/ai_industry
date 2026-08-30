@@ -80,6 +80,17 @@ class AdapterDetectRequest(BaseModel):
     adapter_id: str = Field(min_length=2, max_length=80)
 
 
+class SettingsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_endpoint: str | None = Field(default=None, max_length=500)
+    model_name: str | None = Field(default=None, max_length=160)
+    allow_project_context: bool | None = None
+    send_raw_excel: bool | None = None
+    send_generated_artifacts: bool | None = None
+    expected_revision: int = Field(ge=1)
+
+
 class CompileRunRequest(BaseModel):
     generation_run_id: str
     adapter_id: str = Field(default="gxworks3", min_length=2, max_length=80)

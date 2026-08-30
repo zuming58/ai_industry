@@ -13,6 +13,7 @@ import type {
   MachineSpec, MonitoringEvidence, ProgramBranch, ProgramCommit, ProgramFile,
   Project, ProjectAcceptanceRun, ReleaseCandidate, CandidateVerification,
   SimulationRun, SpecRevision, ValidationIssue, VersionComparisonSection, ProjectTimelineEvent,
+  LocalSettings, TemplateVersionHistory, CompatibilityMatrix, SettingsAuditEvent,
 } from "./domain";
 
 const BRAND_ICON = "/assets/brand/kongpu-app-icon.png";
@@ -511,11 +512,82 @@ function SimulationPage() {
 }
 
 function SettingsPage() {
-  const projects = useProjects(); const adapters = useQuery({ queryKey: ["adapters"], queryFn: api.listAdapters }); const [projectId, setProjectId] = useState(""); const selectedProjectId = projectId || projects.data?.[0]?.id || ""; const queryClient = useQueryClient();
+  const projects = useProjects();
+  const adapters = useQuery({ queryKey: ["adapters"], queryFn: api.listAdapters });
+  const settings = useQuery({ queryKey: ["local-settings"], queryFn: api.getLocalSettings });
+  const audit = useQuery({ queryKey: ["settings-audit"], queryFn: api.listSettingsAudit });
+  const templates = useQuery({ queryKey: ["template-versions"], queryFn: api.listTemplateVersions });
+  const compatibility = useQuery({ queryKey: ["compatibility-matrix"], queryFn: api.getCompatibilityMatrix });
+  const queryClient = useQueryClient();
+  const [projectId, setProjectId] = useState("");
+  const selectedProjectId = projectId || projects.data?.[0]?.id || "";
   const environments = useQuery({ queryKey: ["adapter-environments", selectedProjectId], queryFn: () => api.listAdapterEnvironments(selectedProjectId), enabled: Boolean(selectedProjectId) });
-  const [detecting, setDetecting] = useState<string | null>(null); const detect = async (adapterId: string) => { if (!selectedProjectId) return; setDetecting(adapterId); try { await api.detectAdapter(adapterId, selectedProjectId); await queryClient.invalidateQueries({ queryKey: ["adapter-environments", selectedProjectId] }); notify("环境快照已更新；检测过程未启动厂商程序"); } catch (error) { notifyError(error); } finally { setDetecting(null); } };
+  const [detecting, setDetecting] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [endpoint, setEndpoint] = useState("");
+  const [modelName, setModelName] = useState("");
+  const [allowProjectContext, setAllowProjectContext] = useState(false);
+  const [sendRawExcel, setSendRawExcel] = useState(false);
+  const [sendGeneratedArtifacts, setSendGeneratedArtifacts] = useState(false);
+  useEffect(() => {
+    const value = settings.data?.settings;
+    if (!value) return;
+    setEndpoint(value.model_endpoint || "");
+    setModelName(value.model_name || "");
+    setAllowProjectContext(value.allow_project_context);
+    setSendRawExcel(value.send_raw_excel);
+    setSendGeneratedArtifacts(value.send_generated_artifacts);
+  }, [settings.data?.revision]);
+  const saveSettings = async () => {
+    if (!settings.data) return;
+    setSaving(true);
+    try {
+      await api.updateLocalSettings({
+        model_endpoint: endpoint.trim() || null,
+        model_name: modelName.trim() || null,
+        allow_project_context: allowProjectContext,
+        send_raw_excel: sendRawExcel,
+        send_generated_artifacts: sendGeneratedArtifacts,
+      }, settings.data.revision);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["local-settings"] }),
+        queryClient.invalidateQueries({ queryKey: ["settings-audit"] }),
+      ]);
+      notify("本地设置已保存；密钥不会写入数据库");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const detect = async (adapterId: string) => {
+    if (!selectedProjectId) return;
+    setDetecting(adapterId);
+    try {
+      await api.detectAdapter(adapterId, selectedProjectId);
+      await queryClient.invalidateQueries({ queryKey: ["adapter-environments", selectedProjectId] });
+      notify("环境快照已更新；检测过程未启动厂商程序");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setDetecting(null);
+    }
+  };
   const byAdapter = new Map((environments.data || []).map((item: AdapterEnvironment) => [item.adapter_id, item]));
-  return <main className="hub-page"><PageHeading kicker="P12 · ENVIRONMENT" title="运行环境与 Adapter" description="只读检测本机能力、版本与允许路径；不保存 PLC 写入凭据。" actions={<label className="project-select">项目<select value={selectedProjectId} onChange={(event) => setProjectId(event.target.value)}>{(projects.data || []).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>} /><section className="settings-grid-real">{(adapters.data || []).map((adapter: AdapterDescriptor) => { const environment = byAdapter.get(adapter.adapter_id); return <article className="panel adapter-card-real" key={adapter.adapter_id}><div className="adapter-card-real__head"><Cpu size={25} /><span><strong>{adapter.name}</strong><small>{adapter.vendor} · Adapter v{adapter.version}</small></span><Status value={environment?.status || adapter.verification_level} /></div><dl><dt>验证等级</dt><dd>{environment?.verification_level || adapter.verification_level}</dd><dt>平台</dt><dd>{String(environment?.details.platform || "未检测")}</dd><dt>Python</dt><dd>{String(environment?.details.python || "-")}</dd><dt>目标</dt><dd>{String(environment?.details.target_model || "-")}</dd></dl><div className="capability-matrix">{Object.entries(adapter.capabilities).map(([name, value]) => <span key={name}><code>{name}</code><b>{value}</b></span>)}</div><button className="button button--outline" disabled={!selectedProjectId || Boolean(detecting)} onClick={() => detect(adapter.adapter_id)}>{detecting === adapter.adapter_id ? "检测中…" : "只读检测环境"}</button></article>; })}</section><section className="panel boundary-panel"><WarningCircle size={20} /><div><strong>产品安全边界</strong><p>此页面不会启动未知程序，不执行任意命令，不保存 PLC 下载、RUN/STOP、强制输出或安全 PLC 凭据。</p></div></section></main>;
+  const toggle = (label: string, checked: boolean, setChecked: (value: boolean) => void, detail: string) => <label className="setting-toggle setting-toggle--checkbox"><span><strong>{label}</strong><small>{detail}</small></span><input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} /></label>;
+  return <main className="hub-page">
+    <PageHeading kicker="P12 · SETTINGS" title="本机设置与运行环境" description="设置只影响本机可选解释与数据最小化策略；厂商工具、PLC 硬件和安全能力仍未验证。" actions={<label className="project-select">检测项目<select value={selectedProjectId} onChange={(event) => setProjectId(event.target.value)}><option value="">未选择项目</option>{(projects.data || []).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>} />
+    <div className="p12-settings-layout">
+      <section className="panel settings-form settings-form-real"><div className="panel__header"><div><h3>模型解释配置</h3><p>仅在用户主动请求时使用，不能决定校验、审计、版本或锁定结果</p></div><Status value={settings.data?.settings.model_status || "读取中"} /></div><div className="settings-form__body"><label>模型端点（可选）<input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="https://example.local/v1" autoComplete="off" /></label><label>模型名称（可选）<input value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder="解释模型名称" autoComplete="off" /></label>{toggle("允许项目上下文", allowProjectContext, setAllowProjectContext, "默认关闭；只在主动请求解释时发送最小上下文")}{toggle("允许发送原始 Excel", sendRawExcel, setSendRawExcel, "默认关闭；原始表格不会自动上传")}{toggle("允许发送生成工件", sendGeneratedArtifacts, setSendGeneratedArtifacts, "默认关闭；ST、Control IR 和 TestSpec 不自动外发")}<div className="settings-actions"><span>Revision {settings.data?.revision ?? "-"} · {settings.data?.secret_policy.message}</span><button className="button button--primary" onClick={saveSettings} disabled={!settings.data || saving}>{saving ? "保存中…" : "保存本机设置"}</button></div></div></section>
+      <section className="panel p12-boundary-card"><div className="panel__header"><div><h3>验证边界</h3><p>当前环境的真实能力声明</p></div><WarningCircle size={22} color="#a66b16" /></div><div className="p12-boundary-list"><div><strong>模型</strong><Status value={settings.data?.settings.model_status || "not_configured"} /><small>configured_unverified 仅表示已填写端点，不代表模型已验证</small></div><div><strong>GX Works3 / GX Simulator3 / MX Component</strong><Status value="unverified" /><small>本机不启动未知程序，不猜测工具版本</small></div><div><strong>FX5U 硬件与电气工程师确认</strong><Status value="pending_external" /><small>需要集中验证包，不能由参考模拟替代</small></div></div></section>
+    </div>
+    <section className="panel p12-table-panel"><div className="panel__header"><div><h3>模板版本历史</h3><p>当前工作表与 MachineSpec Schema 契约</p></div><Status value={templates.isLoading ? "读取中" : `${templates.data?.length || 0} 个版本`} /></div><div className="table-scroll"><table><thead><tr><th>版本</th><th>Schema</th><th>状态</th><th>必填工作表</th><th>创建时间</th></tr></thead><tbody>{(templates.data || []).map((item: TemplateVersionHistory) => <tr key={item.id}><td><strong>Template v{item.version}</strong></td><td>{item.schema_version}</td><td><Status value={item.active ? "active" : "inactive"} /></td><td>{Array.isArray(item.definition.required_sheets) ? item.definition.required_sheets.join(" · ") : "-"}</td><td>{formatTime(item.created_at)}</td></tr>)}</tbody></table>{!templates.isLoading && !(templates.data || []).length && <EmptyState title="尚无模板版本" text="模板版本将在 API 初始化时生成。" />}</div></section>
+    <section className="panel p12-table-panel"><div className="panel__header"><div><h3>FX5U 兼容矩阵</h3><p>自动能力、未验证能力和外部验证门分开显示</p></div><Status value={compatibility.isLoading ? "读取中" : "未验证边界"} /></div><div className="table-scroll"><table><thead><tr><th>目标</th><th>MachineSpec</th><th>ST 生成</th><th>参考模拟</th><th>GX Works3</th><th>GX Simulator3</th><th>硬件</th><th>电气复核</th></tr></thead><tbody>{(compatibility.data?.entries || []).map((entry) => <tr key={entry.target.model}><td><strong>{entry.target.model}</strong><small>{entry.target.series}</small></td><td><Status value={entry.machine_spec} /></td><td><Status value={entry.structured_text_generation} /></td><td><Status value={entry.reference_simulation} /></td><td><Status value={entry.gx_works3_compile} /></td><td><Status value={entry.gx_simulator3} /></td><td><Status value={entry.hardware} /></td><td><Status value={entry.electrical_review} /></td></tr>)}</tbody></table></div><div className="p12-claim"><Info size={15} />{compatibility.data?.claim_boundary || "兼容矩阵正在读取。"}</div></section>
+    <section className="panel p12-table-panel"><div className="panel__header"><div><h3>设置审计</h3><p>只记录变更键名，不记录端点内容、模型名称或密钥</p></div><Status value={audit.isLoading ? "读取中" : `${audit.data?.length || 0} 条记录`} /></div><div className="table-scroll"><table><thead><tr><th>时间</th><th>动作</th><th>设置键</th><th>变更字段</th></tr></thead><tbody>{(audit.data || []).map((event: SettingsAuditEvent) => <tr key={event.id}><td>{formatTime(event.created_at)}</td><td><Status value={event.action} /></td><td>{event.key}</td><td><code>{event.changed_keys.join(", ") || "-"}</code></td></tr>)}</tbody></table>{!audit.isLoading && !(audit.data || []).length && <EmptyState title="尚无设置变更" text="保存设置后会在这里记录变更键名。" />}</div></section>
+    <div className="p12-adapter-heading"><div><h3>Adapter 环境快照</h3><p>只读检测受控路径和版本信息；不执行厂商程序</p></div><Status value={selectedProjectId ? "项目级快照" : "未选择项目"} /></div>
+    <section className="settings-grid-real">{(adapters.data || []).map((adapter: AdapterDescriptor) => { const environment = byAdapter.get(adapter.adapter_id); return <article className="panel adapter-card-real" key={adapter.adapter_id}><div className="adapter-card-real__head"><Cpu size={25} /><span><strong>{adapter.name}</strong><small>{adapter.vendor} · Adapter v{adapter.version}</small></span><Status value={environment?.status || adapter.verification_level} /></div><dl><dt>验证等级</dt><dd>{environment?.verification_level || adapter.verification_level}</dd><dt>平台</dt><dd>{String(environment?.details.platform || "未检测")}</dd><dt>Python</dt><dd>{String(environment?.details.python || "-")}</dd><dt>目标</dt><dd>{String(environment?.details.target_model || "-")}</dd></dl><div className="capability-matrix">{Object.entries(adapter.capabilities).map(([name, value]) => <span key={name}><code>{name}</code><b>{value}</b></span>)}</div><button className="button button--outline" disabled={!selectedProjectId || Boolean(detecting)} onClick={() => detect(adapter.adapter_id)}>{detecting === adapter.adapter_id ? "检测中…" : "只读检测环境"}</button></article>; })}</section>
+    <section className="panel boundary-panel"><WarningCircle size={20} /><div><strong>产品安全边界</strong><p>此页面不会启动未知程序，不执行任意命令，不保存 PLC 下载、RUN/STOP、强制输出或安全 PLC 凭据。配置模型也不会改变确定性校验、审计、模拟、版本或锁定结论。</p></div></section>
+  </main>;
 }
 
 function UnavailablePage({ title, detail }: { title: string; detail: string }) { return <main className="hub-page"><PageHeading kicker="NOT CONNECTED" title={title} description="尚未接入真实能力" /><UnavailableBody detail={detail} /></main>; }

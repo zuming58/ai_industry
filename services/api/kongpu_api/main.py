@@ -4,6 +4,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -43,7 +44,7 @@ from .models import (
     ProgramArtifact, ProgramBranch, ProgramCommit, ProjectAcceptanceRun,
     ProgramWorkspace, Project, ReviewConfirmation, SourceArtifact,
     ReleaseCandidate, ReleaseCandidateVerification, SimulationRun, SimulationTrace,
-    TemplateVersion, TestSpecRevision, TraceLink,
+    TemplateVersion, TestSpecRevision, TraceLink, AppSetting, SettingsAuditEvent,
     ValidationIssue, new_id,
 )
 from .repository import (
@@ -59,7 +60,7 @@ from .schemas import (
     ProjectAcceptanceRequest, ReleaseCandidateRequest, RestoreBranchRequest,
     SimulationRunRequest,
     ProgramCommitRequest, ProgramFilePatch, ProjectCreate, ProjectPatch,
-    WarningAcceptRequest,
+    WarningAcceptRequest, SettingsPatch,
 )
 
 
@@ -89,6 +90,7 @@ def create_app(
             database.create_schema()
         with database.session_factory() as session:
             seed_template_version(session)
+            seed_local_settings(session)
         yield
         if database_override is not None:
             database.dispose()
@@ -143,6 +145,56 @@ def seed_template_version(session: Session) -> None:
         definition = {"required_sheets": ["Instructions", "Project", "Components", "Signals", "Sequence"], "optional_sheets": ["Interlocks", "Exceptions"]}
         session.add(TemplateVersion(version="1.0", schema_version="1.0", definition_json=json.dumps(definition, ensure_ascii=False)))
         session.commit()
+
+
+DEFAULT_LOCAL_SETTINGS: dict[str, Any] = {
+    "model_endpoint": None,
+    "model_name": None,
+    "allow_project_context": False,
+    "send_raw_excel": False,
+    "send_generated_artifacts": False,
+}
+
+
+def seed_local_settings(session: Session) -> AppSetting:
+    item = session.scalar(select(AppSetting).where(AppSetting.key == "local"))
+    if item is None:
+        item = AppSetting(key="local", value_json=json.dumps(DEFAULT_LOCAL_SETTINGS, ensure_ascii=False, sort_keys=True))
+        session.add(item)
+        session.commit()
+    return item
+
+
+def local_settings_dict(item: AppSetting) -> dict[str, Any]:
+    values = dict(DEFAULT_LOCAL_SETTINGS)
+    try:
+        values.update(json.loads(item.value_json))
+    except (TypeError, ValueError):
+        pass
+    endpoint = values.get("model_endpoint")
+    updated_at = item.updated_at
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return {
+        "schema": "kongpu-settings/v1",
+        "id": item.id,
+        "revision": item.revision,
+        "settings": {
+            "model_endpoint": endpoint,
+            "model_name": values.get("model_name"),
+            "model_status": "configured_unverified" if endpoint else "not_configured",
+            "allow_project_context": bool(values.get("allow_project_context")),
+            "send_raw_excel": bool(values.get("send_raw_excel")),
+            "send_generated_artifacts": bool(values.get("send_generated_artifacts")),
+        },
+        "secret_policy": {
+            "api_key_configured": False,
+            "secret_storage": "not_supported",
+            "message": "M1-M3 不保存模型密钥；需要调用模型时由用户在外部安全环境显式提供。",
+        },
+        "claim_boundary": "设置只影响本机可选模型解释与数据最小化策略；模型不参与校验、审计、版本、锁定或安全判断。",
+        "updated_at": updated_at.astimezone(timezone.utc).isoformat(),
+    }
 
 
 def project_dict(project: Project) -> dict[str, Any]:
@@ -1286,6 +1338,95 @@ def health() -> dict[str, str]:
 @router.get("/api/v1/adapters")
 def list_adapters() -> list[dict[str, Any]]:
     return [item.as_dict() for item in descriptors()]
+
+
+@router.get("/api/v1/settings")
+def get_local_settings(session: Session = Depends(app_session)) -> dict[str, Any]:
+    return local_settings_dict(seed_local_settings(session))
+
+
+@router.patch("/api/v1/settings")
+def patch_local_settings(
+    payload: SettingsPatch,
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    item = seed_local_settings(session)
+    if payload.expected_revision != item.revision:
+        raise api_error("SETTINGS_REVISION_CONFLICT", "本地设置已被更新，不能静默覆盖", 409, action="刷新设置后重试")
+    submitted_fields = payload.model_fields_set - {"expected_revision"}
+    if not submitted_fields:
+        raise api_error("SETTINGS_EMPTY_PATCH", "没有需要保存的设置", 422, action="至少修改一个设置项")
+    submitted = {field: getattr(payload, field) for field in submitted_fields}
+    if "model_endpoint" in submitted:
+        endpoint = submitted["model_endpoint"]
+        endpoint = endpoint.strip() if isinstance(endpoint, str) else ""
+        if endpoint:
+            parsed = urlparse(endpoint)
+            try:
+                parsed.port
+            except ValueError:
+                parsed = None
+            if (
+                parsed is None
+                or parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or any(char.isspace() for char in parsed.hostname)
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise api_error("INVALID_MODEL_ENDPOINT", "模型端点必须是带有效主机的 http 或 https 基础地址，且不得包含凭据、查询或片段", 422, action="检查端点地址")
+        submitted["model_endpoint"] = endpoint or None
+    if "model_name" in submitted:
+        model_name = submitted["model_name"]
+        submitted["model_name"] = model_name.strip() or None if isinstance(model_name, str) else None
+    current = dict(DEFAULT_LOCAL_SETTINGS)
+    try:
+        current.update(json.loads(item.value_json))
+    except (TypeError, ValueError):
+        pass
+    changes = {key: value for key, value in submitted.items() if current.get(key) != value}
+    if not changes:
+        return local_settings_dict(item)
+    current.update(changes)
+    item.value_json = json.dumps(current, ensure_ascii=False, sort_keys=True)
+    item.revision += 1
+    session.add(SettingsAuditEvent(action="settings.updated", key=item.key, payload_json=json.dumps({"changed_keys": sorted(changes)}, ensure_ascii=False)))
+    session.commit()
+    return local_settings_dict(item)
+
+
+@router.get("/api/v1/settings/audit")
+def get_settings_audit(session: Session = Depends(app_session)) -> list[dict[str, Any]]:
+    rows = session.scalars(select(SettingsAuditEvent).order_by(SettingsAuditEvent.created_at.desc()).limit(50)).all()
+    return [{"id": row.id, "action": row.action, "key": row.key, "changed_keys": json.loads(row.payload_json).get("changed_keys", []), "created_at": row.created_at.isoformat()} for row in rows]
+
+
+@router.get("/api/v1/template-versions")
+def list_template_versions(session: Session = Depends(app_session)) -> list[dict[str, Any]]:
+    seed_template_version(session)
+    rows = session.scalars(select(TemplateVersion).order_by(TemplateVersion.version.desc())).all()
+    return [{"id": row.id, "version": row.version, "schema_version": row.schema_version, "active": row.active, "definition": json.loads(row.definition_json), "created_at": row.created_at.isoformat(), "updated_at": row.updated_at.isoformat()} for row in rows]
+
+
+@router.get("/api/v1/compatibility-matrix")
+def compatibility_matrix() -> dict[str, Any]:
+    entries = []
+    for model in ("FX5U-32MT/ES", "FX5U-64MT/ES", "FX5U-80MT/ES", "FX5UC-96MT/DSS"):
+        entries.append({
+            "target": {"brand": "三菱电机", "series": "MELSEC iQ-F", "model": model},
+            "machine_spec": "automatic_reference",
+            "structured_text_generation": "automatic",
+            "reference_simulation": "automatic_reference",
+            "gx_works3_compile": "unverified",
+            "gx_simulator3": "unverified",
+            "mx_component": "unverified",
+            "hardware": "pending_external",
+            "electrical_review": "pending_external",
+            "safety_plc": "excluded",
+        })
+    return {"schema": "kongpu-compatibility-matrix/v1", "entries": entries, "claim_boundary": "兼容矩阵仅表达当前代码范围与验证等级；未安装厂商工具、未连接 PLC、未进行硬件或电气工程师验证。"}
 
 
 @router.post("/api/v1/adapters/detect")

@@ -68,6 +68,21 @@
 | 监控证据 | GET /api/v1/monitoring-plans/{plan_id}/evidence |
 | 调试任务 | POST /api/v1/monitoring-evidence/{evidence_id}/commissioning-tasks |
 
+## P12 本机设置与兼容性接口
+
+| 领域 | 方法与路径 |
+|---|---|
+| 本机设置 | GET/PATCH /api/v1/settings |
+| 设置审计 | GET /api/v1/settings/audit |
+| 模板版本历史 | GET /api/v1/template-versions |
+| FX5U 兼容矩阵 | GET /api/v1/compatibility-matrix |
+
+`PATCH /api/v1/settings` 必须携带当前 `expected_revision`，只接受模型端点、模型名称和三项数据最小化开关。模型端点必须为不含凭据、查询参数或片段的 `http`/`https` 基础地址；未知字段（包括 `api_key`）被拒绝。设置冲突返回 HTTP 409，空变更返回 422。
+
+设置数据库只保存非敏感配置；模型密钥没有对应字段，不会落库、返回、写日志或进入工件。模型状态 `configured_unverified` 只表示端点已填写，不表示模型服务、回答质量或任何工程验证已通过。设置审计仅保存 changed keys，不保存设置值。
+
+兼容矩阵固定区分 `automatic`、`automatic_reference`、`unverified`、`pending_external` 和 `excluded`。FX5U Structured Text 生成和控谱参考逻辑模拟仍不等同于 GX Works3/GX Simulator3；真实工具、FX5U 硬件和电气工程师确认继续属于集中外部验证。
+
 Adapter v1 能力固定为 detect_environment、get_capabilities、prepare_workspace_copy、compile、get_diagnostics、start_simulation、get_trace、export_vendor_project。ManualAdapter 对厂商操作只返回 manual_required/unverified，不会启动未知程序；reference 的模拟入口只代表 automatic_reference。
 
 生成物审计绑定生成任务创建时的不可变 ProgramCommit，并再次核验 Control IR、TestSpec、ProgramArtifact 与锁定 MachineSpec 的内容哈希。审计报告按 audit_version + Commit 固定，重复请求复用同一结果；发现包含严重级别、文件/行号、稳定对象 ID、Excel 来源和恢复动作。

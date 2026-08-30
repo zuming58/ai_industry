@@ -930,6 +930,30 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
 .capability-matrix span { min-width: 0; min-height: 30px; padding: 5px 7px; display: flex; align-items: center; justify-content: space-between; gap: 7px; background: #f7fafc; border: 1px solid #e7edf3; border-radius: 5px; }
 .capability-matrix code { overflow: hidden; color: var(--ink-700); font-size: 7px; text-overflow: ellipsis; }
 .capability-matrix b { color: var(--blue-600); font-size: 7px; font-weight: 650; }
+.p12-settings-layout { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(300px,.8fr); gap: 12px; align-items: stretch; }
+.settings-form-real { max-width: none; }
+.settings-form-real .panel__header { min-height: 66px; }
+.settings-form-real .settings-form__body { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 12px; }
+.settings-form-real .settings-form__body > label:first-child { grid-column: 1 / -1; }
+.settings-form-real .setting-toggle { margin-inline: 14px; }
+.settings-actions { grid-column: 1 / -1; margin: 14px; padding-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #e5edf3; }
+.settings-actions span { min-width: 0; color: var(--ink-500); font-size: 8px; line-height: 1.5; }
+.settings-actions .button { flex: 0 0 auto; }
+.setting-toggle--checkbox input { width: 18px; height: 18px; accent-color: var(--blue-600); }
+.p12-boundary-card { min-width: 0; }
+.p12-boundary-list { display: grid; gap: 0; }
+.p12-boundary-list > div { padding: 12px 15px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 5px 10px; border-bottom: 1px solid #edf1f5; }
+.p12-boundary-list > div:last-child { border-bottom: 0; }
+.p12-boundary-list strong { min-width: 0; color: var(--ink-900); font-size: 9px; }
+.p12-boundary-list small { grid-column: 1 / -1; color: var(--ink-500); font-size: 8px; line-height: 1.4; }
+.p12-table-panel { min-width: 0; }
+.p12-table-panel .table-scroll { overflow-x: auto; }
+.p12-table-panel table { min-width: 760px; }
+.p12-table-panel td small { display: block; margin-top: 3px; color: var(--ink-500); font-size: 7px; }
+.p12-claim { margin: 0 14px 14px; padding: 9px 10px; display: flex; align-items: flex-start; gap: 7px; color: #47677d; background: #f2f8fc; border: 1px solid #d9eaf3; border-radius: 6px; font-size: 8px; line-height: 1.5; }
+.p12-adapter-heading { margin-top: 4px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.p12-adapter-heading h3 { margin: 0; color: var(--ink-900); font-size: 13px; }
+.p12-adapter-heading p { margin: 3px 0 0; color: var(--ink-500); font-size: 8px; }
 
 @media (max-width: 1400px) {
   .import-layout { grid-template-columns: 260px minmax(330px,.8fr) minmax(360px,1.1fr); }
@@ -940,6 +964,7 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
   .release-workbench { grid-template-columns: minmax(0,1fr) 300px; }
   .monitoring-workbench { grid-template-columns: minmax(0,1fr) 310px; }
   .verification-toolbar--simulation { grid-template-columns: minmax(170px,1fr) 115px minmax(190px,1fr) auto; }
+  .p12-settings-layout { grid-template-columns: minmax(0,1fr); }
 }
 
 @media (max-height: 820px) {

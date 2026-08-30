@@ -212,6 +212,15 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   }
 
   await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "本机设置与运行环境" })).toBeVisible();
+  await expect(page.getByText("模型解释配置")).toBeVisible();
+  await expect(page.getByText("FX5U 兼容矩阵")).toBeVisible();
+  await expect(page.getByText("模板版本历史")).toBeVisible();
+  await page.getByLabel("模型端点（可选）").fill("http://127.0.0.1:11434/v1");
+  await page.getByLabel("模型名称（可选）").fill("e2e-explainer");
+  await page.getByRole("button", { name: "保存本机设置" }).click();
+  await expect(page.getByText("本地设置已保存；密钥不会写入数据库")).toBeVisible();
+  await expect(page.getByText("configured_unverified").first()).toBeVisible();
   const gxWorksCard = page.locator(".adapter-card-real").filter({ hasText: "MELSOFT GX Works3" });
   await gxWorksCard.getByRole("button", { name: "只读检测环境" }).click();
   await expect(page.getByText("环境快照已更新；检测过程未启动厂商程序")).toBeVisible();

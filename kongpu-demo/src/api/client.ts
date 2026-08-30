@@ -24,6 +24,10 @@ import type {
   ProjectAcceptanceRun,
   RestoreBranchResult,
   ProjectTimeline,
+  LocalSettings,
+  TemplateVersionHistory,
+  CompatibilityMatrix,
+  SettingsAuditEvent,
 } from "../domain";
 
 export const apiClient = createClient<paths>({ baseUrl: "" });
@@ -167,6 +171,21 @@ export const api = {
   },
   async listAdapters(): Promise<AdapterDescriptor[]> {
     return ensure(await apiClient.GET("/api/v1/adapters"));
+  },
+  async getLocalSettings(): Promise<LocalSettings> {
+    return ensure(await apiClient.GET("/api/v1/settings"));
+  },
+  async updateLocalSettings(settings: Partial<LocalSettings["settings"]>, expectedRevision: number): Promise<LocalSettings> {
+    return ensure(await apiClient.PATCH("/api/v1/settings", { body: { ...settings, expected_revision: expectedRevision } }));
+  },
+  async listSettingsAudit(): Promise<SettingsAuditEvent[]> {
+    return ensure(await apiClient.GET("/api/v1/settings/audit"));
+  },
+  async listTemplateVersions(): Promise<TemplateVersionHistory[]> {
+    return ensure(await apiClient.GET("/api/v1/template-versions"));
+  },
+  async getCompatibilityMatrix(): Promise<CompatibilityMatrix> {
+    return ensure(await apiClient.GET("/api/v1/compatibility-matrix"));
   },
   async detectAdapter(adapterId: string, projectId?: string): Promise<Record<string, unknown>> {
     return ensure(await apiClient.POST("/api/v1/adapters/detect", { body: { adapter_id: adapterId, project_id: projectId } }));

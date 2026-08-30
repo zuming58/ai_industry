@@ -136,6 +136,54 @@ export type AdapterEnvironment = {
   updated_at: string;
 };
 
+export type LocalSettings = {
+  schema: "kongpu-settings/v1";
+  id: string;
+  revision: number;
+  settings: {
+    model_endpoint: string | null;
+    model_name: string | null;
+    model_status: string;
+    allow_project_context: boolean;
+    send_raw_excel: boolean;
+    send_generated_artifacts: boolean;
+  };
+  secret_policy: { api_key_configured: boolean; secret_storage: string; message: string };
+  claim_boundary: string;
+  updated_at: string;
+};
+
+export type TemplateVersionHistory = {
+  id: string;
+  version: string;
+  schema_version: string;
+  active: boolean;
+  definition: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CompatibilityEntry = {
+  target: { brand: string; series: string; model: string };
+  machine_spec: string;
+  structured_text_generation: string;
+  reference_simulation: string;
+  gx_works3_compile: string;
+  gx_simulator3: string;
+  mx_component: string;
+  hardware: string;
+  electrical_review: string;
+  safety_plc: string;
+};
+
+export type CompatibilityMatrix = {
+  schema: "kongpu-compatibility-matrix/v1";
+  entries: CompatibilityEntry[];
+  claim_boundary: string;
+};
+
+export type SettingsAuditEvent = { id: string; action: string; key: string; changed_keys: string[]; created_at: string };
+
 export type AuditFinding = {
   code: string;
   severity: string;

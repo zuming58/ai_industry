@@ -52,6 +52,34 @@ class TemplateVersion(Base, TimestampMixin):
     definition_json: Mapped[str] = mapped_column(Text)
 
 
+class AppSetting(Base, TimestampMixin):
+    """Non-secret local application settings.
+
+    Secrets are intentionally not represented by this model. Values are
+    stored as a small JSON document so the API can evolve without exposing
+    credentials in SQLite, logs, exports, or the timeline.
+    """
+
+    __tablename__ = "app_settings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    value_json: Mapped[str] = mapped_column(Text, default="{}")
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class SettingsAuditEvent(Base):
+    """Audit trail for global local-settings changes."""
+
+    __tablename__ = "settings_audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    key: Mapped[str] = mapped_column(String(80), index=True)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class SourceArtifact(Base, TimestampMixin):
     __tablename__ = "source_artifacts"
 
