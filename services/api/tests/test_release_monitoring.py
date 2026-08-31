@@ -626,3 +626,41 @@ def test_release_candidate_rejects_uncommitted_branch(
     )
     assert rejected.status_code == 409
     assert rejected.json()["code"] == "PROGRAM_BRANCH_DIRTY"
+
+
+def test_project_timeline_export_is_read_only_and_deterministic(
+    client: TestClient, project: dict, locked_example: dict
+) -> None:
+    timeline = client.get(f"/api/v1/projects/{project['id']}/timeline")
+    assert timeline.status_code == 200, timeline.text
+    before = timeline.json()
+    json_export = client.get(
+        f"/api/v1/projects/{project['id']}/timeline/export",
+        params={"kind": "json"},
+    )
+    assert json_export.status_code == 200, json_export.text
+    assert json_export.json() == before
+    assert json_export.headers["content-disposition"].endswith(
+        f"Kongpu-{project['id'][:8]}-timeline.json\""
+    )
+    assert json_export.headers["etag"] == f'"{hashlib.sha256(json_export.content).hexdigest()}"'
+    after = client.get(f"/api/v1/projects/{project['id']}/timeline").json()
+    assert after == before
+
+    markdown_export = client.get(
+        f"/api/v1/projects/{project['id']}/timeline/export",
+        params={"kind": "markdown"},
+    )
+    assert markdown_export.status_code == 200, markdown_export.text
+    markdown = markdown_export.content.decode("utf-8")
+    assert "控谱项目时间线" in markdown
+    assert project["id"] in markdown
+    assert "MachineSpec Revision" in markdown
+    assert "GX Works3" in markdown
+    assert markdown_export.headers["content-type"].startswith("text/markdown")
+
+    invalid = client.get(
+        f"/api/v1/projects/{project['id']}/timeline/export",
+        params={"kind": "yaml"},
+    )
+    assert invalid.status_code == 422

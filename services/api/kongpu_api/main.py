@@ -3638,6 +3638,60 @@ def get_project_timeline(
     return project_timeline(session, project_id)
 
 
+def render_project_timeline_markdown(timeline: dict[str, Any]) -> bytes:
+    """Render the deterministic timeline for external review and archiving."""
+    summary = timeline["summary"]
+    lines = [
+        "# 控谱项目时间线",
+        "",
+        f"- Schema：`{timeline['schema']}`",
+        f"- Project ID：`{timeline['project_id']}`",
+        f"- 记录数：`{summary['total']}`",
+        f"- 最新事件：`{summary.get('latest_event_at') or '-'}`",
+        "",
+        "## 事件",
+        "",
+        "| 时间（UTC） | 类型 | 标题 | 状态 | 验证等级 | 详情 |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    if timeline["events"]:
+        for event in timeline["events"]:
+            detail = str(event.get("detail") or "").replace("|", "\\|").replace("\n", " ")
+            title = str(event.get("title") or "").replace("|", "\\|").replace("\n", " ")
+            lines.append(
+                f"| `{event['occurred_at']}` | `{event['event_type']}` | {title} | `{event['status']}` | `{event['verification_level']}` | {detail or '-'} |"
+            )
+    else:
+        lines.append("| - | - | 尚无时间线记录 | - | `not_applicable` | 完成项目动作后生成 |")
+    lines.extend(["", "> " + timeline["claim_boundary"], ""])
+    return "\n".join(lines).encode("utf-8")
+
+
+@router.get("/api/v1/projects/{project_id}/timeline/export")
+def download_project_timeline(
+    project_id: str,
+    kind: str = Query(pattern="^(json|markdown)$"),
+    session: Session = Depends(app_session),
+) -> Response:
+    timeline = project_timeline(session, project_id)
+    if kind == "json":
+        content = stable_json_bytes(timeline)
+        media_type = "application/json"
+        suffix = "timeline.json"
+    else:
+        content = render_project_timeline_markdown(timeline)
+        media_type = "text/markdown; charset=utf-8"
+        suffix = "timeline.md"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="Kongpu-{project_id[:8]}-{suffix}"',
+            "ETag": f'"{sha256_bytes(content)}"',
+        },
+    )
+
+
 @router.get("/api/v1/projects")
 def list_projects(
     include_archived: bool = False,

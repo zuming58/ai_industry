@@ -119,6 +119,8 @@ Commit 比较只能在同一 ProgramWorkspace 中执行，使用两个明确 Git
 
 项目时间线遵循 `kongpu-project-timeline/v1`，只读聚合 AuditEvent、MachineSpecRevision、GenerationRun、ProgramCommit、AutomatedReviewRun、GenerationAudit、CompileRun、SimulationRun、ReleaseCandidate、ProjectAcceptanceRun、AdapterEnvironment 和现场/外部证据。每条事件包含 UTC 时间、作者、触发请求、工具、结果、验证等级、实体定位和原始摘要；事件按时间倒序稳定排列，并严格按 project_id 隔离。时间线不创建或升级任何验证结论，厂商工具、真实 PLC、硬件和电气工程师状态仍保持未验证。
 
+时间线可通过 `GET /api/v1/projects/{project_id}/timeline/export?kind=json|markdown` 导出。JSON 保留完整 `kongpu-project-timeline/v1` 结构；Markdown 按 UTC 时间和事件类型稳定排序，适合外部验证包打印归档。导出是只读操作，响应通过 ETag 标识内容哈希，不修改项目、审计或版本记录。
+
 ## PLC Profile v1
 
 项目目标由版本化 Profile 校验，当前自动验证范围包含：

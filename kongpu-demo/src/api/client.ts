@@ -168,6 +168,12 @@ export const api = {
   async getProjectTimeline(projectId: string): Promise<ProjectTimeline> {
     return ensure(await apiClient.GET("/api/v1/projects/{project_id}/timeline", { params: { path: { project_id: projectId } } }));
   },
+  async downloadProjectTimeline(projectId: string, kind: "json" | "markdown"): Promise<Blob> {
+    return ensure(await apiClient.GET("/api/v1/projects/{project_id}/timeline/export", {
+      params: { path: { project_id: projectId }, query: { kind } },
+      parseAs: "blob",
+    }));
+  },
   async commitDiff(commitId: string): Promise<{ commit: ProgramCommit; diff: string }> {
     return ensure(await apiClient.GET("/api/v1/commits/{commit_id}/diff", { params: { path: { commit_id: commitId } } }));
   },

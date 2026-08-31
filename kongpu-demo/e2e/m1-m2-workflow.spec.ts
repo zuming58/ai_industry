@@ -229,6 +229,14 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.locator(".project-timeline__list")).toContainText("离线现场快照");
   await expect(page.locator(".project-timeline__list")).toContainText("manual_unverified");
   await expect(page.locator(".project-timeline__boundary")).toContainText("GX Works3");
+  const timelineJsonDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出 JSON" }).click();
+  expect((await timelineJsonDownload).suggestedFilename()).toContain("timeline.json");
+  await expect(page.getByText("项目时间线 JSON 已下载")).toBeVisible();
+  const timelineMarkdownDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出 Markdown" }).click();
+  expect((await timelineMarkdownDownload).suggestedFilename()).toContain("timeline.md");
+  await expect(page.getByText("项目时间线 Markdown 已下载")).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page.getByRole("button", { name: "版本比较" }).click();
   await expect(page.getByLabel("基线 Commit")).toBeVisible();

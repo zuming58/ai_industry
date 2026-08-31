@@ -27,7 +27,7 @@ M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”�
 - 每项目独立本地 Git 文本仓库；二进制与 JSON 工件继续使用内容寻址存储。
 - 已锁定 MachineSpec 到按 PLC Profile 选择的类型化 Control IR、保守 Structured Text 骨架、变量表和 TestSpec 的确定性生成；当前包含三菱 FX5U 与汇川 H5U Profile。
 - 同一输入和生成器版本产生稳定内容；信号、步骤和测试可追溯到 MachineSpec 与 Excel 来源。
-- P06 真实程序树、文件编辑、保存、提交、生成警告和追溯；P11 支持真实分支、任意两个同项目 Commit 的结构化多工件比较（源码、MachineSpec、I/O、参数、Control IR、TestSpec、验证和厂商配置）、规格到现场证据的统一只读时间线，以及从历史 Commit 创建独立恢复分支。
+- P06 真实程序树、文件编辑、保存、提交、生成警告和追溯；P11 支持真实分支、任意两个同项目 Commit 的结构化多工件比较（源码、MachineSpec、I/O、参数、Control IR、TestSpec、验证和厂商配置）、规格到现场证据的统一只读时间线，以及从历史 Commit 创建独立恢复分支。时间线还支持 JSON/Markdown 只读导出，按 UTC 时间稳定排序并保留事件来源、验证等级、状态与厂商未验证边界；导出通过 ETag 返回内容哈希，不修改历史。
 - 恢复操作不移动来源分支、不改写 Commit 历史，只复制不可变 Control IR、TestSpec、程序工件和追溯基线，并为新 GenerationRun 重新运行 20 次自动审核；旧静态审计、参考模拟、候选包和厂商证据不会继承。
 - 未锁定规格、并发冲突和路径穿越会被阻止；生成不会覆盖已有历史。
 
