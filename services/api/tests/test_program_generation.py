@@ -124,6 +124,9 @@ def test_inovance_h5u_profile_template_generation_audit_and_reference_simulation
         ).decode("utf-8")
     assert validation_package["target"]["profile_id"] == "inovance-h5u-st-v1"
     assert validation_package["target"]["vendor_tool"] == "AutoShop"
+    assert validation_package["prerequisites"]["software"] == ["汇川 AutoShop"]
+    assert "H5U CPU" in validation_package["prerequisites"]["hardware"]
+    assert "H5U I/O 与断电/断线恢复" in validation_package["prerequisites"]["validation_scope"]
     assert {item["id"] for item in validation_package["gates"]} >= {
         "autoshop_compile",
         "autoshop_simulation",

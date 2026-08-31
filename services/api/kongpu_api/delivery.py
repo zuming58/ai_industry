@@ -26,6 +26,9 @@ def build_validation_package(
     generator_version: str,
     test_spec_hash: str,
     gates: list[dict[str, Any]],
+    required_software: list[str] | None = None,
+    hardware_prerequisites: list[str] | None = None,
+    external_validation_scope: list[str] | None = None,
 ) -> bytes:
     """Build a deterministic, profile-bound checklist for future vendor validation."""
     vendor_tool = str(target_profile.get("vendor_tool") or "厂商 IDE")
@@ -44,6 +47,11 @@ def build_validation_package(
         "verification_level": "manual_unverified",
         "project": {"id": project.get("id"), "code": project.get("code"), "name": project.get("name")},
         "target": target_profile,
+        "prerequisites": {
+            "software": list(required_software or []),
+            "hardware": list(hardware_prerequisites or []),
+            "validation_scope": list(external_validation_scope or []),
+        },
         "baseline": {"machine_spec_hash": machine_spec_hash, "program_commit_id": program_commit_id, "git_sha": git_sha, "generator_version": generator_version, "test_spec_hash": test_spec_hash},
         "gates": gates,
         "steps": steps,

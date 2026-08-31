@@ -1943,6 +1943,9 @@ def create_release_candidate(
         "adapter_id": target_profile.adapter_id,
         "vendor_tool": target_profile.vendor_tool,
         "program_language": target_profile.program_language,
+        "required_software": list(target_profile.required_software),
+        "hardware_prerequisites": list(target_profile.hardware_prerequisites),
+        "external_validation_scope": list(target_profile.external_validation_scope),
     }
     validation_package = json.loads(
         build_validation_package(
@@ -1954,6 +1957,9 @@ def create_release_candidate(
             generator_version=run.generator_version,
             test_spec_hash=test_spec.content_hash,
             gates=external_validation_gates(spec),
+            required_software=list(target_profile.required_software),
+            hardware_prerequisites=list(target_profile.hardware_prerequisites),
+            external_validation_scope=list(target_profile.external_validation_scope),
         ).decode("utf-8")
     )
     entries["validation/EXTERNAL_VALIDATION_PACKAGE.json"] = stable_json_bytes(

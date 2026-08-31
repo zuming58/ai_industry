@@ -21,6 +21,9 @@ class PlcProfile:
     address_pattern: re.Pattern[str]
     direct_address_binding: bool
     claim_boundary: str
+    required_software: tuple[str, ...]
+    hardware_prerequisites: tuple[str, ...]
+    external_validation_scope: tuple[str, ...]
 
     def matches(self, target: dict[str, Any]) -> bool:
         brand = str(target.get("brand") or target.get("plc_brand") or "").strip().casefold()
@@ -57,6 +60,9 @@ PROFILES = (
         address_pattern=_BASIC_DISCRETE_ADDRESS,
         direct_address_binding=True,
         claim_boundary="GX Works3、GX Simulator3、MX Component 和真实 FX5U 均待集中外部验证。",
+        required_software=("GX Works3", "GX Simulator3", "MX Component"),
+        hardware_prerequisites=("FX5U CPU", "目标 I/O/通信模块", "24 VDC 电源", "安全负载模拟器或受控台架"),
+        external_validation_scope=("Structured Text 导入与 Rebuild All", "GX Simulator3 变量读写与异常场景", "FX5U I/O 与断电/断线恢复", "电气工程师互锁/复位确认"),
     ),
     PlcProfile(
         profile_id="inovance-h5u-st-v1",
@@ -69,6 +75,9 @@ PROFILES = (
         address_pattern=_BASIC_DISCRETE_ADDRESS,
         direct_address_binding=False,
         claim_boundary="AutoShop 直接地址绑定、编译、厂商模拟和真实 H5U 均待集中外部验证。",
+        required_software=("汇川 AutoShop",),
+        hardware_prerequisites=("H5U CPU", "目标 I/O/通信模块", "24 VDC 电源", "安全负载模拟器或受控台架"),
+        external_validation_scope=("Structured Text 工程导入与完整编译", "AutoShop 模拟或等效厂商测试", "H5U I/O 与断电/断线恢复", "电气工程师互锁/复位确认"),
     ),
 )
 
@@ -113,6 +122,9 @@ def compatibility_entries() -> list[dict[str, Any]]:
                     "program_language": profile.program_language,
                     "adapter_id": profile.adapter_id,
                     "vendor_tool": profile.vendor_tool,
+                    "required_software": list(profile.required_software),
+                    "hardware_prerequisites": list(profile.hardware_prerequisites),
+                    "external_validation_scope": list(profile.external_validation_scope),
                     "machine_spec": "automatic_reference",
                     "structured_text_generation": "automatic",
                     "static_audit": "automatic",

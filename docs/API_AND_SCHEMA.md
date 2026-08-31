@@ -118,10 +118,12 @@ Commit 比较只能在同一 ProgramWorkspace 中执行，使用两个明确 Git
 
 项目目标由版本化 Profile 校验，当前自动验证范围包含：
 
-| Profile | 目标 | Adapter | 自动能力 | 未验证边界 |
+| Profile | 目标 | Adapter | 自动能力 | 厂商/硬件未验证边界 |
 |---|---|---|---|---|
 | `mitsubishi-fx5u-st-v1` | 三菱电机 MELSEC iQ-F：FX5U/FX5UC | `gxworks3` | MachineSpec、保守 IEC ST、静态审计、控谱参考模拟 | GX Works3/GX Simulator3、FX5U 硬件和电气确认 |
 | `inovance-h5u-st-v1` | 汇川技术 H5U：H5U-1614MTD-A8、H5U-3232MTD-A8 | `autoshop` | MachineSpec、保守 IEC ST、静态审计、控谱参考模拟 | AutoShop 直接地址绑定/编译/模拟、H5U 硬件和电气确认 |
+
+每个 Profile 还公开结构化验证前置条件：`required_software`（需要安装并由工程师确认版本的软件）、`hardware_prerequisites`（CPU、模块、电源和受控负载等硬件清单）以及 `external_validation_scope`（必须在厂商工具或台架上执行的验证项）。这些字段会随 P09 候选包写入 `prerequisites`，便于集中验证时直接使用；它们是待验证清单，不代表本机已安装或已通过验证。
 
 汇川 Profile 首批只接受 `X/Y/M` 逻辑地址格式。生成器不会为 H5U 写入未经公开资料和实机验证的 `AT` 地址绑定，而是在 ST 变量注释和 Control IR 中保留逻辑地址；因此本机结果是“自动验证通过”，不是 AutoShop 编译通过。
 

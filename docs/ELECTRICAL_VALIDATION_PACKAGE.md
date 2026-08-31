@@ -1,6 +1,6 @@
 # FX5U / H5U 集中电气验证包
 
-目标 Profile 决定厂商工具：FX5U 使用 GX Works3/GX Simulator3，H5U 使用 AutoShop。两条路径的代码自动验证都不等于厂商工具或硬件验证。
+目标 Profile 决定厂商工具：FX5U 使用 GX Works3/GX Simulator3（通信验证可用 MX Component），H5U 使用 AutoShop。P09 候选包会自动附带 `prerequisites` 前置条件清单，包含所需软件、CPU/模块/电源/受控负载和外部验证范围。两条路径的代码自动验证都不等于厂商工具或硬件验证。
 
 ## 目的与安排
 
@@ -16,6 +16,8 @@
 - 与项目一致的 GX Works3、GX Simulator3、MX Component 版本和合法授权；
 - FX5U CPU、必要 I/O/通信模块、24 VDC 电源、断路/急停、端子、指示灯或安全的负载模拟器；
 - 电气工程师、受控测试台和断电/回退权限。
+
+若目标为汇川 H5U，则将上面两项替换为与项目一致版本的汇川 AutoShop、H5U CPU/目标 I/O 或通信模块、24 VDC 电源及受控负载台架。具体型号和验证范围以候选包 `validation/EXTERNAL_VALIDATION_PACKAGE.json` 的 `prerequisites` 为准；任何未安装或未实测项均保持 `pending_external`。
 
 ## M3 前置自动化证据
 

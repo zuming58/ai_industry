@@ -140,3 +140,9 @@ def test_template_history_and_compatibility_matrix_are_explicit(client: TestClie
     assert {entry["vendor_simulation"] for entry in body["entries"]} == {"unverified"}
     assert {entry["hardware"] for entry in body["entries"]} == {"pending_external"}
     assert {entry["safety_plc"] for entry in body["entries"]} == {"excluded"}
+    fx5u = next(item for item in body["entries"] if item["target"]["model"] == "FX5U-64MT/ES")
+    h5u = next(item for item in body["entries"] if item["target"]["model"] == "H5U-1614MTD-A8")
+    assert fx5u["required_software"] == ["GX Works3", "GX Simulator3", "MX Component"]
+    assert h5u["required_software"] == ["汇川 AutoShop"]
+    assert "FX5U I/O 与断电/断线恢复" in fx5u["external_validation_scope"]
+    assert "H5U I/O 与断电/断线恢复" in h5u["external_validation_scope"]

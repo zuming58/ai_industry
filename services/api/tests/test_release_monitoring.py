@@ -214,6 +214,8 @@ def test_release_candidate_and_read_only_monitoring_flow(
     assert validation_package["status"] == "pending_external"
     assert validation_package["verification_level"] == "manual_unverified"
     assert validation_package["target"]["profile_id"] == "mitsubishi-fx5u-st-v1"
+    assert validation_package["prerequisites"]["software"] == ["GX Works3", "GX Simulator3", "MX Component"]
+    assert "FX5U CPU" in validation_package["prerequisites"]["hardware"]
     assert validation_package["baseline"]["machine_spec_hash"] == candidate["manifest"]["baseline"]["machine_spec_hash"]
     assert validation_package["baseline"]["git_sha"] == candidate["manifest"]["baseline"]["git_sha"]
     checklist = zipfile.ZipFile(io.BytesIO(package.content)).read(
