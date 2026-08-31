@@ -154,6 +154,14 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await page.getByRole("button", { name: "下载填写清单" }).click();
   expect((await validationChecklistDownload).suggestedFilename()).toContain("validation-checklist.md");
   await expect(page.getByText("可填写验证清单已下载")).toBeVisible();
+  const ledgerJsonDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "证据台账 JSON" }).click();
+  expect((await ledgerJsonDownload).suggestedFilename()).toContain("evidence-ledger.json");
+  await expect(page.getByText("证据台账 JSON 已下载")).toBeVisible();
+  const ledgerMarkdownDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "证据台账 Markdown" }).click();
+  expect((await ledgerMarkdownDownload).suggestedFilename()).toContain("evidence-ledger.md");
+  await expect(page.getByText("证据台账 Markdown 已下载")).toBeVisible();
   const candidateDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载 ZIP" }).click();
   const candidateArchive = await candidateDownload;
