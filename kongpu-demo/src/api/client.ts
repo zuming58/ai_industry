@@ -254,6 +254,12 @@ export const api = {
       body: { expected_candidate_revision: candidate.revision },
     }));
   },
+  async downloadValidationMaterial(candidateId: string, kind: "json" | "checklist"): Promise<Blob> {
+    return ensure(await apiClient.GET("/api/v1/release-candidates/{candidate_id}/validation-material", {
+      params: { path: { candidate_id: candidateId }, query: { kind } },
+      parseAs: "blob",
+    }));
+  },
   async listAcceptanceRuns(projectId: string): Promise<ProjectAcceptanceRun[]> {
     return ensure(await apiClient.GET("/api/v1/projects/{project_id}/acceptance-runs", { params: { path: { project_id: projectId } } }));
   },

@@ -136,6 +136,14 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText("automatic_passed_external_pending").first()).toBeVisible();
   await expect(page.getByText("程序 Commit 与不可变生成基线")).toBeVisible();
   await expect(page.getByText("交付候选包完整性")).toBeVisible();
+  const validationJsonDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载验证 JSON" }).click();
+  expect((await validationJsonDownload).suggestedFilename()).toContain("validation.json");
+  await expect(page.getByText("验证 JSON 已下载")).toBeVisible();
+  const validationChecklistDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载填写清单" }).click();
+  expect((await validationChecklistDownload).suggestedFilename()).toContain("validation-checklist.md");
+  await expect(page.getByText("可填写验证清单已下载")).toBeVisible();
   const candidateDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载 ZIP" }).click();
   const candidateArchive = await candidateDownload;

@@ -234,6 +234,32 @@ def test_release_candidate_and_read_only_monitoring_flow(
     assert "每项只能填写 `通过`、`失败` 或 `未执行`" in checklist
     assert "电气工程师结论与签名" in checklist
 
+    validation_json = client.get(
+        f"/api/v1/release-candidates/{candidate['id']}/validation-material",
+        params={"kind": "json"},
+    )
+    assert validation_json.status_code == 200, validation_json.text
+    assert validation_json.json() == validation_package
+    assert validation_json.headers["content-disposition"].endswith(
+        f'Kongpu-{candidate["version"]}-validation.json"'
+    )
+    assert validation_json.headers["etag"] == (
+        f'"{hashlib.sha256(validation_json.content).hexdigest()}"'
+    )
+
+    validation_checklist = client.get(
+        f"/api/v1/release-candidates/{candidate['id']}/validation-material",
+        params={"kind": "checklist"},
+    )
+    assert validation_checklist.status_code == 200, validation_checklist.text
+    assert validation_checklist.content.decode("utf-8") == checklist
+    assert validation_checklist.headers["content-type"].startswith("text/markdown")
+    invalid_kind = client.get(
+        f"/api/v1/release-candidates/{candidate['id']}/validation-material",
+        params={"kind": "unknown"},
+    )
+    assert invalid_kind.status_code == 422
+
     repeated = client.post(
         f"/api/v1/projects/{project['id']}/release-candidates",
         json={

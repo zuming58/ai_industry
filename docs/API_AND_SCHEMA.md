@@ -60,6 +60,7 @@
 | 交付候选 | POST/GET /api/v1/projects/{project_id}/release-candidates |
 | 本机就绪度预检 | GET /api/v1/projects/{project_id}/readiness?generation_run_id=... |
 | 候选详情 | GET /api/v1/release-candidates/{candidate_id} |
+| 候选验证材料 | GET /api/v1/release-candidates/{candidate_id}/validation-material?kind=json 或 checklist |
 | 候选完整性复核 | POST /api/v1/release-candidates/{candidate_id}/verify |
 | 项目自动验收 | POST/GET /api/v1/projects/{project_id}/acceptance-runs |
 | 自动验收详情 | GET /api/v1/acceptance-runs/{acceptance_id} |

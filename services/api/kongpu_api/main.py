@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -2156,6 +2158,77 @@ def get_release_candidate(
     if item is None:
         raise api_error("RELEASE_CANDIDATE_NOT_FOUND", "交付候选包不存在", 404)
     return release_candidate_dict(session, item)
+
+
+@router.get("/api/v1/release-candidates/{candidate_id}/validation-material")
+def download_release_validation_material(
+    candidate_id: str,
+    kind: str = Query(pattern="^(json|checklist)$"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> Response:
+    """Return verified validation material without mutating candidate state."""
+    candidate = session.get(ReleaseCandidate, candidate_id)
+    if candidate is None:
+        raise api_error("RELEASE_CANDIDATE_NOT_FOUND", "交付候选包不存在", 404)
+    _record, package = read_artifact_bytes(
+        session, runtime_settings, candidate.package_artifact_id
+    )
+    try:
+        manifest = verify_delivery_candidate(package)
+    except DeliveryInputError as exc:
+        raise api_error(
+            "DELIVERY_PACKAGE_VERIFICATION_FAILED",
+            str(exc),
+            409,
+            action="停止使用该候选包并检查本机工件库",
+        ) from exc
+    stored_manifest = json.loads(candidate.manifest_json)
+    baseline = manifest.get("baseline", {})
+    if (
+        manifest != stored_manifest
+        or sha256_bytes(stable_json_bytes(manifest)) != candidate.manifest_hash
+    ):
+        raise api_error(
+            "DELIVERY_MANIFEST_MISMATCH",
+            "包内 Manifest 与候选记录不一致",
+            409,
+            action="停止使用该候选包并检查本机数据库与工件库",
+        )
+    if (
+        baseline.get("generation_run_id") != candidate.generation_run_id
+        or baseline.get("program_commit_id") != candidate.program_commit_id
+    ):
+        raise api_error(
+            "DELIVERY_BASELINE_MISMATCH",
+            "候选包 Manifest 的生成任务或 Commit 基线不一致",
+            409,
+            action="停止使用该候选包并重新生成候选",
+        )
+    path, media_type, suffix = (
+        ("validation/EXTERNAL_VALIDATION_PACKAGE.json", "application/json", "validation.json")
+        if kind == "json"
+        else ("validation/EXTERNAL_VALIDATION_CHECKLIST.md", "text/markdown; charset=utf-8", "validation-checklist.md")
+    )
+    try:
+        with zipfile.ZipFile(io.BytesIO(package), mode="r") as archive:
+            content = archive.read(path)
+    except (zipfile.BadZipFile, KeyError) as exc:
+        raise api_error(
+            "DELIVERY_VALIDATION_MATERIAL_MISSING",
+            "候选包缺少外部验证材料",
+            409,
+            action="停止使用该候选包并重新生成候选",
+        ) from exc
+    filename = f"Kongpu-{candidate.version}-{suffix}"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "ETag": f'"{sha256_bytes(content)}"',
+        },
+    )
 
 
 @router.post("/api/v1/release-candidates/{candidate_id}/verify")
