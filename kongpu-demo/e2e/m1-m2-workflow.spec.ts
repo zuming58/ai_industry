@@ -108,6 +108,11 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
 
   await page.getByRole("link", { name: "P08 模拟" }).click();
   await expect(page.getByRole("heading", { name: "控谱参考逻辑模拟" })).toBeVisible();
+  const testCaseSelect = page.getByLabel("TestSpec 场景");
+  await expect.poll(async () => await testCaseSelect.locator("option").count()).toBeGreaterThan(1);
+  await testCaseSelect.selectOption({ index: 1 });
+  await page.getByRole("button", { name: "载入场景" }).click();
+  await expect(page.getByText("已载入 TestSpec 场景输入；运行前仍会执行受限校验")).toBeVisible();
   await page.getByRole("button", { name: "运行参考模拟" }).click();
   await expect(page.getByText("控谱参考逻辑模拟已完成；不等同于 GX Simulator3")).toBeVisible();
   await expect(page.getByText(/TestSpec 用例：/)).toBeVisible();
