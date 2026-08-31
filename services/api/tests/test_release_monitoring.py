@@ -226,6 +226,13 @@ def test_release_candidate_and_read_only_monitoring_flow(
     ).decode("utf-8")
     assert "集中外部验证执行清单" in checklist
     assert "GX Works3" in checklist
+    assert "GX Simulator3" in checklist
+    assert "MX Component" in checklist
+    assert "FX5U CPU" in checklist
+    assert "FX5U I/O 与断电/断线恢复" in checklist
+    assert f"Program Commit ID：{candidate['program_commit_id']}" in checklist
+    assert "每项只能填写 `通过`、`失败` 或 `未执行`" in checklist
+    assert "电气工程师结论与签名" in checklist
 
     repeated = client.post(
         f"/api/v1/projects/{project['id']}/release-candidates",

@@ -65,29 +65,63 @@ def render_validation_checklist(package: dict[str, Any]) -> bytes:
     """Render the immutable validation package as a human-readable checklist."""
     target = package["target"]
     baseline = package["baseline"]
+    prerequisites = package.get("prerequisites") or {}
+    software = list(prerequisites.get("software") or [])
+    hardware = list(prerequisites.get("hardware") or [])
+    validation_scope = list(prerequisites.get("validation_scope") or [])
     lines = [
         "# 控谱集中外部验证执行清单",
         "",
         f"目标：{target['brand']} {target['series']} {target['model']}",
         f"厂商工具：{target['vendor_tool']}",
         f"MachineSpec SHA-256：{baseline['machine_spec_hash']}",
+        f"Program Commit ID：{baseline['program_commit_id']}",
         f"Program Commit：{baseline['git_sha']}",
         f"生成器：{baseline['generator_version']}",
         f"TestSpec SHA-256：{baseline['test_spec_hash']}",
         "",
         "验证等级：`pending_external`。不得将本清单或参考模拟表述为厂商编译、硬件实测或安全确认通过。",
         "",
+        "## 验证前置条件",
+        "",
+        "### 所需软件",
+        "",
+    ]
+    lines.extend([f"- [ ] {item}" for item in software] or ["- [ ] 由电气工程师确认目标厂商软件与合法授权"])
+    lines.extend(["", "### 硬件与受控台架", ""])
+    lines.extend([f"- [ ] {item}" for item in hardware] or ["- [ ] 由电气工程师确认目标 PLC、模块、电源与安全负载"])
+    lines.extend(["", "### 集中验证范围", ""])
+    lines.extend([f"- [ ] {item}" for item in validation_scope] or ["- [ ] 厂商导入、编译、模拟、台架与电气复核"])
+    lines.extend([
+        "",
         "## 执行步骤",
         "",
         "| 状态 | 步骤 | 负责人 | 预期结果 | 证据 | 实际结果 |",
         "|---|---|---|---|---|---|",
-    ]
+    ])
     for step in package["steps"]:
         lines.append(f"| [ ] | {step['title']} | {step['owner']} | {step['expected']} | {step['evidence']} |  |")
     lines.extend(["", "## 外部验证门", ""])
     for gate in package["gates"]:
         lines.extend([f"- [ ] **{gate['title']}**：{gate['required_evidence']}"])
-    lines.extend(["", "## 回退", "", "发生失败时保留原工程副本、日志和截图；创建新 Issue/分支修复并新增自动回归，禁止覆盖锁定规格、既有 Commit 或证据原件。", ""])
+    lines.extend([
+        "",
+        "## 结果与证据登记",
+        "",
+        "- 实际软件版本：____________________________",
+        "- PLC CPU / 模块 / 固件：____________________",
+        "- 工程副本 SHA-256：_________________________",
+        "- 编译/模拟/台架证据路径与 SHA-256：_________",
+        "- 执行人、日期与签名：_______________________",
+        "- 电气工程师结论与签名：_____________________",
+        "",
+        "每项只能填写 `通过`、`失败` 或 `未执行`；失败必须记录原始诊断和回退结果，未执行不得记为通过。外部证据上传后仍为 `manual_unverified`，只有集中验证流程按精确基线签字后才能升级相应验证等级。",
+        "",
+        "## 回退",
+        "",
+        "发生失败时保留原工程副本、日志和截图；创建新 Issue/分支修复并新增自动回归，禁止覆盖锁定规格、既有 Commit 或证据原件。",
+        "",
+    ])
     return "\n".join(lines).encode("utf-8")
 
 

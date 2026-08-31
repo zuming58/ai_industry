@@ -143,6 +143,10 @@ def test_inovance_h5u_profile_template_generation_audit_and_reference_simulation
     }
     assert "AutoShop" in checklist
     assert "H5U-1614MTD-A8" in checklist
+    assert "H5U CPU" in checklist
+    assert "H5U I/O 与断电/断线恢复" in checklist
+    assert "实际软件版本" in checklist
+    assert "外部证据上传后仍为 `manual_unverified`" in checklist
 
     wrong_adapter = client.post(
         f"/api/v1/projects/{project['id']}/compile-runs",
