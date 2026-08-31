@@ -151,7 +151,16 @@ function ProjectModal({ project, onClose, onSaved }: { project?: Project; onClos
 
 function ProjectChooser({ destination, title }: { destination: string; title: string }) {
   const navigate = useNavigate(); const projects = useProjects();
-  return <main className="hub-page"><PageHeading kicker="PROJECT SELECTOR" title={title} description="先选择一个真实项目，再进入对应工程页面。" /><ProjectTable projects={(projects.data || []).filter((item) => !item.archived)} onOpen={(project) => navigate("/projects/" + project.id + "/" + destination)} /></main>;
+  const activeProjects = (projects.data || []).filter((item) => !item.archived);
+  useEffect(() => {
+    if (!projects.isLoading && !projects.isError && activeProjects.length === 1) {
+      navigate("/projects/" + activeProjects[0].id + "/" + destination, { replace: true });
+    }
+  }, [activeProjects, destination, navigate, projects.isError, projects.isLoading]);
+  if (!projects.isLoading && !projects.isError && activeProjects.length === 1) {
+    return <main className="hub-page chooser-redirect"><PageHeading kicker="PROJECT WORKSPACE" title={title} description="正在打开当前项目的真实工程工作区…" /><section className="panel chooser-redirect__card"><div className="chooser-redirect__icon"><ArrowRight size={25} /></div><div><strong>{activeProjects[0].name}</strong><span>{activeProjects[0].code} · {activeProjects[0].plc_brand} {activeProjects[0].plc_model}</span></div><Status value={activeProjects[0].status} /></section></main>;
+  }
+  return <main className="hub-page"><PageHeading kicker="PROJECT SELECTOR" title={title} description="多个项目时先选择目标项目，再进入对应工程页面。" />{projects.isLoading ? <EmptyState title="正在读取项目" text="连接本机 API…" /> : projects.isError ? <EmptyState title="无法连接本机 API" text={errorMessage(projects.error)} /> : <ProjectTable projects={activeProjects} onOpen={(project) => navigate("/projects/" + project.id + "/" + destination)} />}</main>;
 }
 
 function useProjectContext() {

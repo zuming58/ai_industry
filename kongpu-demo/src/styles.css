@@ -905,6 +905,11 @@ td small { color: #8495a5; font-family: "IBM Plex Mono", Consolas, monospace; fo
 .candidate-evidence__list article code { font-size: 7px; }
 .candidate-evidence__list article p { grid-column: 1 / -1; margin: 0; color: var(--ink-500); font-size: 8px; line-height: 1.45; overflow-wrap: anywhere; }
 .candidate-evidence__empty { margin: 0; padding: 10px; color: var(--ink-500); background: #f5f8fb; border-radius: 5px; font-size: 8px; }
+.chooser-redirect__card { min-height: 92px; padding: 18px; display: grid; grid-template-columns: 42px minmax(0,1fr) auto; align-items: center; gap: 12px; }
+.chooser-redirect__icon { width: 38px; height: 38px; display: grid; place-items: center; color: #fff; background: var(--blue-600); border-radius: 7px; }
+.chooser-redirect__card > div:nth-child(2) { min-width: 0; display: grid; gap: 4px; }
+.chooser-redirect__card strong { color: var(--ink-900); font-size: 13px; }
+.chooser-redirect__card span { color: var(--ink-500); font-size: 9px; }
 .acceptance-report { margin-top: 12px; padding: 12px; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; gap: 10px; background: #f7fafc; border: 1px solid #dce4ec; border-radius: 7px; }
 .acceptance-report > div:first-child { display: grid; gap: 4px; }
 .acceptance-report > div:first-child strong { color: var(--ink-900); font-size: 10px; }
