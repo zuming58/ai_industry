@@ -260,6 +260,20 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(gxWorksCard).toContainText(/unavailable|manual_required/);
   await expect(gxWorksCard).toContainText("unverified");
   await expectNoHorizontalOverflow(page);
+
+  await page.goto("/devices");
+  await expect(page.getByRole("heading", { name: "设备库" })).toBeVisible();
+  await expect(page.getByText("FX5U-64MT/ES")).toBeVisible();
+  await expect(page.getByText("H5U-1614MTD-A8")).toBeVisible();
+  await expect(page.getByText("双电控气缸")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  await page.goto("/documents");
+  await expect(page.getByRole("heading", { name: "文档资料" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "打开 MachineSpec 模板中心" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "打开 Excel 导入与确定性校验" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "打开 本机 API 文档" })).toHaveAttribute("href", "http://127.0.0.1:8000/docs");
+  await expectNoHorizontalOverflow(page);
 });
 
 test("unsupported workbook is rejected with a recoverable error", async ({ page, request }) => {
