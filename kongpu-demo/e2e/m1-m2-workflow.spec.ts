@@ -128,6 +128,16 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(releasePrerequisites.getByText("FX5U CPU", { exact: true })).toBeVisible();
   await expect(releasePrerequisites.getByText("FX5U I/O 与断电/断线恢复", { exact: true })).toBeVisible();
   await expect(page.getByText("GX Works3 导入与 Rebuild All")).toBeVisible();
+  await page.getByLabel("证据备注（可选）").fill("E2E 厂商编译日志，尚未由电气工程师签字");
+  await page.getByLabel("候选证据文件").setInputFiles({
+    name: "gxworks3-rebuild.log",
+    mimeType: "text/plain",
+    buffer: Buffer.from("GX Works3 Rebuild All manual evidence\n"),
+  });
+  await expect(page.getByText("候选证据已按 SHA-256 保存；验证等级保持 manual_unverified")).toBeVisible();
+  await expect(page.getByText("gxworks3-rebuild.log")).toBeVisible();
+  await expect(page.getByText("E2E 厂商编译日志，尚未由电气工程师签字")).toBeVisible();
+  await expect(page.getByText("1 项 · manual_unverified")).toBeVisible();
   await page.getByRole("button", { name: "独立复核 ZIP" }).click();
   await expect(page.getByText("候选 ZIP 已重新读取并通过独立完整性复核")).toBeVisible();
   await expect(page.getByText("passed").first()).toBeVisible();
@@ -152,6 +162,8 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText("不可变输入未变化，已复用交付候选包")).toBeVisible();
   await page.reload();
   await expect(page.getByText("RC-0001").first()).toBeVisible();
+  await expect(page.getByText("gxworks3-rebuild.log")).toBeVisible();
+  await expect(page.getByText("1 项 · manual_unverified")).toBeVisible();
   await expect(page.getByText("automatic_passed_external_pending").first()).toBeVisible();
   await page.getByRole("button", { name: "复核并复用验收报告" }).click();
   await expect(page.getByText("自动验收输入未变化，已复用不可变报告")).toBeVisible();

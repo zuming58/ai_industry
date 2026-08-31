@@ -11,7 +11,8 @@ import { api, saveBlob } from "./api/client";
 import type {
   AdapterDescriptor, AdapterEnvironment, AutomatedReviewRun, CompileRun, GenerationRun,
   MachineSpec, MonitoringEvidence, ProgramBranch, ProgramCommit, ProgramFile,
-  Project, ProjectAcceptanceRun, ReleaseCandidate, CandidateVerification,
+  Project, ProjectAcceptanceRun, ReleaseCandidate, ReleaseCandidateEvidence,
+  ReleaseEvidenceKind, CandidateVerification,
   SimulationRun, SpecRevision, ValidationIssue, VersionComparisonSection, ProjectTimelineEvent,
   LocalSettings, TemplateVersionHistory, CompatibilityMatrix, SettingsAuditEvent,
   SimulationDiagnostic, SimulationScalar,
@@ -329,12 +330,20 @@ function ReleasePage() {
   const [busy, setBusy] = useState(false);
   const [verification, setVerification] = useState<CandidateVerification | null>(null);
   const [acceptance, setAcceptance] = useState<ProjectAcceptanceRun | null>(null);
+  const evidenceInputRef = useRef<HTMLInputElement>(null);
+  const [evidenceKind, setEvidenceKind] = useState<ReleaseEvidenceKind>("vendor_compile");
+  const [evidenceNote, setEvidenceNote] = useState("");
   const selectedRunId = runId || runs.data?.[0]?.id || "";
   const readiness = useQuery({ queryKey: ["project-readiness", projectId, selectedRunId], queryFn: () => api.getProjectReadiness(projectId, selectedRunId), enabled: Boolean(selectedRunId) });
   const run = runs.data?.find((item) => item.id === selectedRunId);
   const review = reviews.data?.find((item) => item.generation_run_id === selectedRunId);
   const simulation = simulations.data?.find((item) => item.generation_run_id === selectedRunId && item.status === "review_ready");
   const candidate = candidates.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === review?.program_commit_id);
+  const candidateEvidence = useQuery({
+    queryKey: ["release-candidate-evidence", candidate?.id],
+    queryFn: () => api.listReleaseCandidateEvidence(candidate!.id),
+    enabled: Boolean(candidate?.id),
+  });
   const persistedAcceptance = acceptances.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === review?.program_commit_id && item.release_candidate_id === candidate?.id) || null;
   const activeAcceptance = acceptance?.generation_run_id === selectedRunId ? acceptance : persistedAcceptance;
 
@@ -402,11 +411,40 @@ function ReleasePage() {
     }
   };
 
+  const uploadCandidateEvidence = async (file?: File) => {
+    if (!candidate || !file) return;
+    setBusy(true);
+    try {
+      const result = await api.uploadReleaseCandidateEvidence(candidate, file, evidenceKind, evidenceNote);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["release-candidates", projectId] }),
+        queryClient.invalidateQueries({ queryKey: ["release-candidate-evidence", candidate.id] }),
+      ]);
+      notify(result.reused ? "相同候选证据已存在，已复用原记录" : "候选证据已按 SHA-256 保存；验证等级保持 manual_unverified");
+      setEvidenceNote("");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setBusy(false);
+      if (evidenceInputRef.current) evidenceInputRef.current.value = "";
+    }
+  };
+
+  const downloadEvidence = async (item: ReleaseCandidateEvidence) => {
+    try {
+      const blob = await api.downloadArtifact(item.source_artifact_id);
+      saveBlob(blob, item.original_name);
+      notify("候选证据原件已下载");
+    } catch (error) {
+      notifyError(error);
+    }
+  };
+
   const gates = candidate?.manifest.external_validation_gates || review?.external_validation_gates || [];
   return <ProjectPage kicker="P09 · DELIVERY CANDIDATE" title="交付候选包" description="把当前通过自动审核的 Commit、参考模拟与证据打成确定性不可变 ZIP；这不是正式发布或厂商通过。">
     {!runs.data?.length ? <EmptyState title="尚无程序生成任务" text="先在 P06 生成程序，在 P07 完成自动审核，并在 P08 运行参考模拟。" /> : <>
       <div className="verification-toolbar release-toolbar"><label>生成任务<select value={selectedRunId} onChange={(event) => setRunId(event.target.value)}>{runs.data.map((item) => <option value={item.id} key={item.id}>{item.generator_version} · {formatTime(item.updated_at)}</option>)}</select></label><button className="button button--primary" disabled={busy || !run} onClick={createCandidate}><DownloadSimple size={16} />{busy ? "生成中…" : candidate ? "校验并复用候选包" : "生成交付候选包"}</button></div>
-      <div className="release-workbench"><section className="panel release-readiness"><div className="panel__header"><div><h3>自动交付门禁</h3><p>所有检查都绑定当前程序 Commit</p></div><Status value={readiness.data?.status || activeAcceptance?.status || candidate?.status || "待生成"} /></div>{readiness.data && <div className="readiness-preflight"><div><strong>本机就绪度</strong><span>{readiness.data.summary.ready} / {readiness.data.summary.total} 项自动门禁完成；外部待验证 {readiness.data.summary.external_pending} 项</span></div><Status value={readiness.data.status} /></div>}<div className="readiness-list"><ReleaseGate label="当前 Commit 自动审核" ready={review?.status === "passed"} value={review?.status || "尚无报告"} /><ReleaseGate label="控谱参考逻辑模拟" ready={Boolean(simulation)} value={simulation?.status || "尚未运行"} /><ReleaseGate label="候选 ZIP 独立复核" ready={Boolean(verification || activeAcceptance?.candidate_verification_id)} value={verification?.status || (activeAcceptance?.candidate_verification_id ? "passed" : "尚未复核")} /><ReleaseGate label="厂商/硬件/电气验证" ready={false} value="pending_external" /></div>{candidate ? <div className="candidate-detail"><div className="candidate-detail__head"><span><strong>{candidate.version}</strong><small>{candidate.verification_level} · {formatTime(candidate.created_at)}</small></span><div className="candidate-actions"><button className="button button--outline" disabled={busy} onClick={verifyCandidate}><CheckCircle size={16} />独立复核 ZIP</button><button className="button button--outline" onClick={() => downloadValidationMaterial(candidate, "json")}><DownloadSimple size={16} />下载验证 JSON</button><button className="button button--outline" onClick={() => downloadValidationMaterial(candidate, "checklist")}><DownloadSimple size={16} />下载填写清单</button><button className="button button--outline" onClick={() => download(candidate)}><DownloadSimple size={16} />下载 ZIP</button></div></div><dl><dt>Program Commit</dt><dd><code>{candidate.program_commit_id}</code></dd><dt>Manifest SHA-256</dt><dd><code>{candidate.manifest_hash}</code></dd><dt>ZIP SHA-256</dt><dd><code>{candidate.package_sha256}</code></dd><dt>包内文件</dt><dd>{candidate.manifest.entries.length} 项 · {candidate.package_size_bytes} bytes</dd></dl><div className="review-claim"><Info size={17} /><span>{candidate.manifest.claim_boundary}</span></div><div className="acceptance-report"><div><strong>项目自动验收总报告</strong><small>汇总当前 Commit 的自动审核、静态审计、参考模拟和候选包完整性。</small></div><button className="button button--primary" disabled={busy} onClick={createAcceptance}>{activeAcceptance ? "复核并复用验收报告" : "生成自动验收报告"}</button>{activeAcceptance && <><div className="acceptance-checks">{activeAcceptance.checks.map((check) => <span key={check.id}><CheckCircle size={15} weight="fill" /><b>{check.title}</b><Status value={check.status} /></span>)}</div><dl><dt>验收状态</dt><dd><Status value={activeAcceptance.status} /></dd><dt>报告 SHA-256</dt><dd><code>{activeAcceptance.report_sha256}</code></dd><dt>外部待验证</dt><dd>{activeAcceptance.summary.external_pending} 项</dd></dl><p>{activeAcceptance.claim_boundary}</p></>}</div></div> : <EmptyState title="尚未形成候选包" text="后端会检查分支无未提交修改、最新 Commit 自动审核、静态审计和参考模拟。" />}</section>
+      <div className="release-workbench"><section className="panel release-readiness"><div className="panel__header"><div><h3>自动交付门禁</h3><p>所有检查都绑定当前程序 Commit</p></div><Status value={readiness.data?.status || activeAcceptance?.status || candidate?.status || "待生成"} /></div>{readiness.data && <div className="readiness-preflight"><div><strong>本机就绪度</strong><span>{readiness.data.summary.ready} / {readiness.data.summary.total} 项自动门禁完成；外部待验证 {readiness.data.summary.external_pending} 项</span></div><Status value={readiness.data.status} /></div>}<div className="readiness-list"><ReleaseGate label="当前 Commit 自动审核" ready={review?.status === "passed"} value={review?.status || "尚无报告"} /><ReleaseGate label="控谱参考逻辑模拟" ready={Boolean(simulation)} value={simulation?.status || "尚未运行"} /><ReleaseGate label="候选 ZIP 独立复核" ready={Boolean(verification || activeAcceptance?.candidate_verification_id)} value={verification?.status || (activeAcceptance?.candidate_verification_id ? "passed" : "尚未复核")} /><ReleaseGate label="厂商/硬件/电气验证" ready={false} value="pending_external" /></div>{candidate ? <div className="candidate-detail"><div className="candidate-detail__head"><span><strong>{candidate.version}</strong><small>{candidate.verification_level} · {formatTime(candidate.created_at)}</small></span><div className="candidate-actions"><button className="button button--outline" disabled={busy} onClick={verifyCandidate}><CheckCircle size={16} />独立复核 ZIP</button><button className="button button--outline" onClick={() => downloadValidationMaterial(candidate, "json")}><DownloadSimple size={16} />下载验证 JSON</button><button className="button button--outline" onClick={() => downloadValidationMaterial(candidate, "checklist")}><DownloadSimple size={16} />下载填写清单</button><button className="button button--outline" onClick={() => download(candidate)}><DownloadSimple size={16} />下载 ZIP</button></div></div><dl><dt>Program Commit</dt><dd><code>{candidate.program_commit_id}</code></dd><dt>Manifest SHA-256</dt><dd><code>{candidate.manifest_hash}</code></dd><dt>ZIP SHA-256</dt><dd><code>{candidate.package_sha256}</code></dd><dt>包内文件</dt><dd>{candidate.manifest.entries.length} 项 · {candidate.package_size_bytes} bytes</dd><dt>候选证据</dt><dd>{candidate.evidence_count} 项 · manual_unverified</dd></dl><div className="review-claim"><Info size={17} /><span>{candidate.manifest.claim_boundary}</span></div><section className="candidate-evidence"><div className="candidate-evidence__heading"><div><strong>候选外部证据台账</strong><small>原件按 SHA-256 不可变保存；上传不会升级验证等级或改变候选结论。</small></div><Status value="manual_unverified" /></div><div className="candidate-evidence__form"><label>证据类型<select value={evidenceKind} onChange={(event) => setEvidenceKind(event.target.value as ReleaseEvidenceKind)}><option value="environment">环境与版本</option><option value="vendor_import">厂商工程导入</option><option value="vendor_compile">厂商编译</option><option value="vendor_simulation">厂商模拟</option><option value="hardware_test">硬件台架</option><option value="electrical_signoff">电气签字</option><option value="other">其他</option></select></label><label>证据备注（可选）<input value={evidenceNote} maxLength={2000} onChange={(event) => setEvidenceNote(event.target.value)} placeholder="记录软件版本、台架或验证步骤" /></label><input ref={evidenceInputRef} type="file" hidden aria-label="候选证据文件" onChange={(event) => uploadCandidateEvidence(event.target.files?.[0])} /><button className="button button--outline" disabled={busy} onClick={() => evidenceInputRef.current?.click()}><UploadSimple size={16} />上传证据原件</button></div><div className="candidate-evidence__list">{candidateEvidence.data?.map((item) => <article key={item.id}><span><strong>{item.original_name}</strong><small>{item.evidence_kind} · {formatTime(item.created_at)} · {item.size_bytes} bytes</small></span><code>{item.sha256}</code><Status value={item.verification_level} /><button className="button button--outline" onClick={() => downloadEvidence(item)}><DownloadSimple size={15} />原件</button>{item.note && <p>{item.note}</p>}</article>)}{candidateEvidence.isLoading && <p className="candidate-evidence__empty">正在读取候选证据…</p>}{!candidateEvidence.isLoading && !candidateEvidence.data?.length && <p className="candidate-evidence__empty">尚无候选证据；集中验证后可在此绑定日志、截图、报告或签字扫描件。</p>}</div></section><div className="acceptance-report"><div><strong>项目自动验收总报告</strong><small>汇总当前 Commit 的自动审核、静态审计、参考模拟和候选包完整性。</small></div><button className="button button--primary" disabled={busy} onClick={createAcceptance}>{activeAcceptance ? "复核并复用验收报告" : "生成自动验收报告"}</button>{activeAcceptance && <><div className="acceptance-checks">{activeAcceptance.checks.map((check) => <span key={check.id}><CheckCircle size={15} weight="fill" /><b>{check.title}</b><Status value={check.status} /></span>)}</div><dl><dt>验收状态</dt><dd><Status value={activeAcceptance.status} /></dd><dt>报告 SHA-256</dt><dd><code>{activeAcceptance.report_sha256}</code></dd><dt>外部待验证</dt><dd>{activeAcceptance.summary.external_pending} 项</dd></dl><p>{activeAcceptance.claim_boundary}</p></>}</div></div> : <EmptyState title="尚未形成候选包" text="后端会检查分支无未提交修改、最新 Commit 自动审核、静态审计和参考模拟。" />}</section>
       <aside className="panel external-gates release-gates"><div className="external-gates__title"><WarningCircle size={17} /><span><strong>集中外部验证门</strong><small>不会由自动打包升级为通过</small></span></div>{readiness.data && <div className="release-prerequisites"><div><b>所需软件</b><ul>{readiness.data.prerequisites.software.map((item) => <li key={item}>{item}</li>)}</ul></div><div><b>硬件与台架</b><ul>{readiness.data.prerequisites.hardware.map((item) => <li key={item}>{item}</li>)}</ul></div><div><b>验证范围</b><ul>{readiness.data.prerequisites.validation_scope.map((item) => <li key={item}>{item}</li>)}</ul></div></div>}{gates.map((gate) => <article key={gate.id}><span><strong>{gate.title}</strong><small>{gate.required_evidence}</small></span><Status value={gate.status} /></article>)}{!gates.length && <EmptyState title="等待自动审核" text="生成程序后会建立五项外部验证门。" />}</aside></div>
       {Boolean(candidates.data?.length) && <section className="panel candidate-history"><div className="panel__header"><div><h3>历史候选包</h3><p>旧包不可覆盖，相同输入自动复用</p></div></div>{candidates.data?.map((item) => <div className="candidate-row" key={item.id}><span><strong>{item.version}</strong><small>{formatTime(item.created_at)} · {item.program_commit_id.slice(0, 12)}</small></span><code>{item.manifest_hash.slice(0, 16)}</code><Status value={item.status} /><button onClick={() => download(item)} aria-label={"下载 " + item.version}><DownloadSimple size={16} /></button></div>)}</section>}
     </>}

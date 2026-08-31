@@ -390,6 +390,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/release-candidates/{candidate_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Release Candidate Evidence */
+        get: operations["list_release_candidate_evidence_api_v1_release_candidates__candidate_id__evidence_get"];
+        put?: never;
+        /** Upload Release Candidate Evidence */
+        post: operations["upload_release_candidate_evidence_api_v1_release_candidates__candidate_id__evidence_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/acceptance-runs": {
         parameters: {
             query?: never;
@@ -1071,6 +1089,20 @@ export interface components {
             evidence_kind: string;
             /** Expected Revision */
             expected_revision: number;
+        };
+        /** Body_upload_release_candidate_evidence_api_v1_release_candidates__candidate_id__evidence_post */
+        Body_upload_release_candidate_evidence_api_v1_release_candidates__candidate_id__evidence_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+            /** Evidence Kind */
+            evidence_kind: string;
+            /** Expected Candidate Revision */
+            expected_candidate_revision: number;
+            /** Note */
+            note?: string | null;
         };
         /** BranchCreateRequest */
         BranchCreateRequest: {
@@ -2197,6 +2229,78 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_release_candidate_evidence_api_v1_release_candidates__candidate_id__evidence_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_release_candidate_evidence_api_v1_release_candidates__candidate_id__evidence_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_release_candidate_evidence_api_v1_release_candidates__candidate_id__evidence_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

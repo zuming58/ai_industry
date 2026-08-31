@@ -358,8 +358,36 @@ export type ReleaseCandidate = {
   package_artifact_id: string;
   package_sha256: string;
   package_size_bytes: number;
+  evidence_count: number;
   revision: number;
   reused?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ReleaseEvidenceKind =
+  | "environment"
+  | "vendor_import"
+  | "vendor_compile"
+  | "vendor_simulation"
+  | "hardware_test"
+  | "electrical_signoff"
+  | "other";
+
+export type ReleaseCandidateEvidence = {
+  id: string;
+  project_id: string;
+  release_candidate_id: string;
+  source_artifact_id: string;
+  evidence_kind: ReleaseEvidenceKind;
+  verification_level: "manual_unverified";
+  note?: string | null;
+  original_name: string;
+  media_type: string;
+  size_bytes: number;
+  sha256: string;
+  reused?: boolean;
+  candidate?: ReleaseCandidate;
   created_at: string;
   updated_at: string;
 };

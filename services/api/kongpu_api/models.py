@@ -432,6 +432,28 @@ class ReleaseCandidate(Base, TimestampMixin):
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
+class ReleaseCandidateEvidence(Base, TimestampMixin):
+    """Immutable external evidence attached to one delivery candidate."""
+
+    __tablename__ = "release_candidate_evidence"
+    __table_args__ = (
+        UniqueConstraint(
+            "release_candidate_id",
+            "source_artifact_id",
+            "evidence_kind",
+            name="uq_release_candidate_evidence_source_kind",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    release_candidate_id: Mapped[str] = mapped_column(ForeignKey("release_candidates.id", ondelete="CASCADE"), index=True)
+    source_artifact_id: Mapped[str] = mapped_column(ForeignKey("source_artifacts.id"), index=True)
+    evidence_kind: Mapped[str] = mapped_column(String(40), index=True)
+    verification_level: Mapped[str] = mapped_column(String(40), default="manual_unverified")
+    note: Mapped[str | None] = mapped_column(Text)
+
+
 class ReleaseCandidateVerification(Base, TimestampMixin):
     __tablename__ = "release_candidate_verifications"
     __table_args__ = (

@@ -383,6 +383,146 @@ def test_release_candidate_and_read_only_monitoring_flow(
     )
 
 
+def test_release_candidate_evidence_is_immutable_scoped_and_unverified(
+    client: TestClient, project: dict, locked_example: dict
+) -> None:
+    run = _generated_run(
+        client, project, locked_example, "generated/release-evidence"
+    )
+    simulation = client.post(
+        f"/api/v1/projects/{project['id']}/simulation-runs",
+        json={
+            "generation_run_id": run["id"],
+            "expected_generation_revision": run["revision"],
+        },
+    )
+    assert simulation.status_code == 201, simulation.text
+    candidate_response = client.post(
+        f"/api/v1/projects/{project['id']}/release-candidates",
+        json={
+            "generation_run_id": run["id"],
+            "expected_generation_revision": run["revision"],
+        },
+    )
+    assert candidate_response.status_code == 201, candidate_response.text
+    candidate = candidate_response.json()
+    assert candidate["evidence_count"] == 0
+
+    content = b"GX Works3 Rebuild All manual evidence\n"
+    uploaded = client.post(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence",
+        headers={"If-Match": str(candidate["revision"])},
+        data={
+            "evidence_kind": "vendor_compile",
+            "expected_candidate_revision": candidate["revision"],
+            "note": "GX Works3 版本与诊断日志，尚未签字确认",
+        },
+        files={"file": ("rebuild.log", content, "text/plain")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    evidence = uploaded.json()
+    candidate = evidence["candidate"]
+    assert evidence["reused"] is False
+    assert evidence["verification_level"] == "manual_unverified"
+    assert evidence["sha256"] == hashlib.sha256(content).hexdigest()
+    assert evidence["original_name"] == "rebuild.log"
+    assert evidence["size_bytes"] == len(content)
+    assert candidate["revision"] == 2
+    assert candidate["evidence_count"] == 1
+    assert candidate["status"] == "external_validation_required"
+    assert candidate["verification_level"] == "automatic_package"
+
+    downloaded = client.get(
+        f"/api/v1/artifacts/{evidence['source_artifact_id']}"
+    )
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == content
+    assert hashlib.sha256(downloaded.content).hexdigest() == evidence["sha256"]
+
+    listed = client.get(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence"
+    )
+    assert listed.status_code == 200, listed.text
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["id"] == evidence["id"]
+    assert listed.json()[0]["verification_level"] == "manual_unverified"
+
+    duplicate = client.post(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence",
+        headers={"If-Match": str(candidate["revision"])},
+        data={
+            "evidence_kind": "vendor_compile",
+            "expected_candidate_revision": candidate["revision"],
+            "note": "重复上传不创建新记录",
+        },
+        files={"file": ("rebuild-copy.log", content, "text/plain")},
+    )
+    assert duplicate.status_code == 201, duplicate.text
+    assert duplicate.json()["id"] == evidence["id"]
+    assert duplicate.json()["reused"] is True
+    assert duplicate.json()["candidate"]["revision"] == candidate["revision"]
+    assert duplicate.json()["candidate"]["evidence_count"] == 1
+
+    stale = client.post(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence",
+        data={
+            "evidence_kind": "environment",
+            "expected_candidate_revision": candidate["revision"] - 1,
+        },
+        files={"file": ("environment.txt", b"versions", "text/plain")},
+    )
+    assert stale.status_code == 409, stale.text
+    assert stale.json()["code"] == "REVISION_CONFLICT"
+
+    invalid_kind = client.post(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence",
+        data={
+            "evidence_kind": "plc_download_success",
+            "expected_candidate_revision": candidate["revision"],
+        },
+        files={"file": ("invalid.txt", b"invalid", "text/plain")},
+    )
+    assert invalid_kind.status_code == 422, invalid_kind.text
+    assert invalid_kind.json()["code"] == "RELEASE_EVIDENCE_KIND_INVALID"
+    assert "vendor_compile" in invalid_kind.json()["location"]["allowed"]
+
+    too_large = client.post(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence",
+        data={
+            "evidence_kind": "other",
+            "expected_candidate_revision": candidate["revision"],
+        },
+        files={
+            "file": (
+                "too-large.bin",
+                b"x" * (20 * 1024 * 1024 + 1),
+                "application/octet-stream",
+            )
+        },
+    )
+    assert too_large.status_code == 413, too_large.text
+    assert too_large.json()["code"] == "FILE_TOO_LARGE"
+
+    current = client.get(
+        f"/api/v1/release-candidates/{candidate['id']}"
+    ).json()
+    assert current["status"] == "external_validation_required"
+    assert current["verification_level"] == "automatic_package"
+    assert current["revision"] == candidate["revision"]
+    assert current["evidence_count"] == 1
+
+    timeline = client.get(f"/api/v1/projects/{project['id']}/timeline")
+    assert timeline.status_code == 200, timeline.text
+    ledger_events = [
+        item
+        for item in timeline.json()["events"]
+        if item["entity_type"] == "ReleaseCandidateEvidence"
+    ]
+    assert ledger_events
+    assert any(item["source"].get("page") == "release" for item in ledger_events)
+    assert all(item["verification_level"] == "manual_unverified" for item in ledger_events)
+
+
 def test_release_candidate_rejects_uncommitted_branch(
     client: TestClient, project: dict, locked_example: dict
 ) -> None:

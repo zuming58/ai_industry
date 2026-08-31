@@ -51,7 +51,7 @@ from .models import (
     MachineSpecRevision, MonitoringEvidence, MonitoringPlan,
     ProgramArtifact, ProgramBranch, ProgramCommit, ProjectAcceptanceRun,
     ProgramWorkspace, Project, ReviewConfirmation, SourceArtifact,
-    ReleaseCandidate, ReleaseCandidateVerification, SimulationRun, SimulationTrace,
+    ReleaseCandidate, ReleaseCandidateEvidence, ReleaseCandidateVerification, SimulationRun, SimulationTrace,
     TemplateVersion, TestSpecRevision, TraceLink, AppSetting, SettingsAuditEvent,
     ValidationIssue, new_id,
 )
@@ -73,6 +73,16 @@ from .schemas import (
 
 
 router = APIRouter()
+
+RELEASE_EVIDENCE_KINDS = frozenset({
+    "environment",
+    "vendor_import",
+    "vendor_compile",
+    "vendor_simulation",
+    "hardware_test",
+    "electrical_signoff",
+    "other",
+})
 
 
 def app_settings(request: Request) -> Settings:
@@ -157,8 +167,23 @@ def create_app(
     return application
 
 
-def api_error(code: str, message: str, status_code: int = 400, *, action: str | None = None) -> HTTPException:
-    return HTTPException(status_code=status_code, detail={"code": code, "message": message, "action": action})
+def api_error(
+    code: str,
+    message: str,
+    status_code: int = 400,
+    *,
+    location: Any | None = None,
+    action: str | None = None,
+) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "code": code,
+            "message": message,
+            "location": location,
+            "action": action,
+        },
+    )
 
 
 def seed_template_version(session: Session) -> None:
@@ -694,6 +719,11 @@ def simulation_dict(session: Session, item: SimulationRun) -> dict[str, Any]:
 
 def release_candidate_dict(session: Session, item: ReleaseCandidate) -> dict[str, Any]:
     package = session.get(SourceArtifact, item.package_artifact_id)
+    evidence_count = session.scalar(
+        select(func.count()).select_from(ReleaseCandidateEvidence).where(
+            ReleaseCandidateEvidence.release_candidate_id == item.id
+        )
+    ) or 0
     return {
         "id": item.id,
         "project_id": item.project_id,
@@ -709,9 +739,39 @@ def release_candidate_dict(session: Session, item: ReleaseCandidate) -> dict[str
         "package_artifact_id": item.package_artifact_id,
         "package_sha256": package.sha256 if package else None,
         "package_size_bytes": package.size_bytes if package else None,
+        "evidence_count": evidence_count,
         "revision": item.revision,
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def release_candidate_evidence_dict(
+    session: Session, item: ReleaseCandidateEvidence, *, reused: bool = False
+) -> dict[str, Any]:
+    artifact = session.get(SourceArtifact, item.source_artifact_id)
+    if artifact is None:
+        raise api_error(
+            "ARTIFACT_NOT_FOUND",
+            "候选证据的原始工件不存在",
+            409,
+            action="停止使用该证据并检查本机工件库",
+        )
+    return {
+        "id": item.id,
+        "project_id": item.project_id,
+        "release_candidate_id": item.release_candidate_id,
+        "source_artifact_id": item.source_artifact_id,
+        "evidence_kind": item.evidence_kind,
+        "verification_level": item.verification_level,
+        "note": item.note,
+        "original_name": artifact.original_name,
+        "media_type": artifact.media_type,
+        "size_bytes": artifact.size_bytes,
+        "sha256": artifact.sha256,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+        "reused": reused,
     }
 
 
@@ -2254,6 +2314,113 @@ def verify_release_candidate(
     return result
 
 
+@router.get("/api/v1/release-candidates/{candidate_id}/evidence")
+def list_release_candidate_evidence(
+    candidate_id: str, session: Session = Depends(app_session)
+) -> list[dict[str, Any]]:
+    candidate = session.get(ReleaseCandidate, candidate_id)
+    if candidate is None:
+        raise api_error("RELEASE_CANDIDATE_NOT_FOUND", "交付候选包不存在", 404)
+    items = session.scalars(
+        select(ReleaseCandidateEvidence)
+        .where(ReleaseCandidateEvidence.release_candidate_id == candidate.id)
+        .order_by(ReleaseCandidateEvidence.created_at.desc(), ReleaseCandidateEvidence.id)
+    ).all()
+    return [release_candidate_evidence_dict(session, item) for item in items]
+
+
+@router.post("/api/v1/release-candidates/{candidate_id}/evidence", status_code=201)
+def upload_release_candidate_evidence(
+    candidate_id: str,
+    file: UploadFile = File(...),
+    evidence_kind: str = Form(...),
+    expected_candidate_revision: int = Form(...),
+    note: str | None = Form(default=None),
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    candidate = session.get(ReleaseCandidate, candidate_id)
+    if candidate is None:
+        raise api_error("RELEASE_CANDIDATE_NOT_FOUND", "交付候选包不存在", 404)
+    check_expected_revision(candidate.revision, expected_candidate_revision, if_match)
+    normalized_kind = evidence_kind.strip().lower()
+    if normalized_kind not in RELEASE_EVIDENCE_KINDS:
+        raise api_error(
+            "RELEASE_EVIDENCE_KIND_INVALID",
+            "候选证据类型不受支持",
+            422,
+            location={"field": "evidence_kind", "allowed": sorted(RELEASE_EVIDENCE_KINDS)},
+            action="选择页面列出的证据类型",
+        )
+    normalized_note = note.strip() if note else None
+    if normalized_note and len(normalized_note) > 2000:
+        raise api_error(
+            "RELEASE_EVIDENCE_NOTE_TOO_LONG",
+            "候选证据备注不能超过 2000 个字符",
+            422,
+            location={"field": "note"},
+            action="缩短备注后重新上传",
+        )
+    content = file.file.read(runtime_settings.max_upload_bytes + 1)
+    if len(content) > runtime_settings.max_upload_bytes:
+        raise api_error(
+            "FILE_TOO_LARGE",
+            "证据文件超过 20 MB 限制",
+            413,
+            action="压缩证据或拆分后重新上传",
+        )
+    stored = store_bytes(
+        session,
+        runtime_settings,
+        content,
+        file.filename or "release-evidence.bin",
+        file.content_type or "application/octet-stream",
+    )
+    existing = session.scalar(
+        select(ReleaseCandidateEvidence).where(
+            ReleaseCandidateEvidence.release_candidate_id == candidate.id,
+            ReleaseCandidateEvidence.source_artifact_id == stored.record.id,
+            ReleaseCandidateEvidence.evidence_kind == normalized_kind,
+        )
+    )
+    if existing is not None:
+        result = release_candidate_evidence_dict(session, existing, reused=True)
+        result["candidate"] = release_candidate_dict(session, candidate)
+        session.rollback()
+        return result
+    evidence = ReleaseCandidateEvidence(
+        project_id=candidate.project_id,
+        release_candidate_id=candidate.id,
+        source_artifact_id=stored.record.id,
+        evidence_kind=normalized_kind,
+        verification_level="manual_unverified",
+        note=normalized_note,
+    )
+    session.add(evidence)
+    session.flush()
+    candidate.revision += 1
+    audit(
+        session,
+        candidate.project_id,
+        "release.evidence_uploaded",
+        "ReleaseCandidateEvidence",
+        evidence.id,
+        {
+            "release_candidate_id": candidate.id,
+            "candidate_version": candidate.version,
+            "evidence_kind": normalized_kind,
+            "source_artifact_id": stored.record.id,
+            "sha256": stored.record.sha256,
+            "verification_level": "manual_unverified",
+        },
+    )
+    session.commit()
+    result = release_candidate_evidence_dict(session, evidence, reused=False)
+    result["candidate"] = release_candidate_dict(session, candidate)
+    return result
+
+
 @router.post("/api/v1/projects/{project_id}/acceptance-runs", status_code=201)
 def create_project_acceptance_run(
     project_id: str,
@@ -2907,6 +3074,7 @@ def project_timeline(session: Session, project_id: str) -> dict[str, Any]:
         "simulation.reference_completed": "参考逻辑模拟已完成",
         "release.candidate_created": "交付候选包已生成",
         "release.candidate_verified": "候选包完整性已复核",
+        "release.evidence_uploaded": "候选外部证据已导入",
         "monitoring.plan_created": "只读监控计划已创建",
         "monitoring.snapshot_recorded": "离线现场快照已记录",
         "commissioning.task_created": "工程师调试任务已创建",
@@ -3100,6 +3268,35 @@ def project_timeline(session: Session, project_id: str) -> dict[str, Any]:
             verification_level=row.verification_level,
             source={"page": "compile", "evidence_id": row.id, "compile_run_id": row.compile_run_id, "simulation_run_id": row.simulation_run_id},
             payload={"evidence_kind": row.evidence_kind, "source_artifact_id": row.source_artifact_id},
+        )
+
+    candidate_evidence_rows = session.scalars(
+        select(ReleaseCandidateEvidence)
+        .where(ReleaseCandidateEvidence.project_id == project_id)
+        .order_by(ReleaseCandidateEvidence.created_at)
+    ).all()
+    for row in candidate_evidence_rows:
+        artifact = session.get(SourceArtifact, row.source_artifact_id)
+        candidate = session.get(ReleaseCandidate, row.release_candidate_id)
+        add(
+            "release_evidence",
+            "ReleaseCandidateEvidence",
+            row.id,
+            f"候选证据 · {row.evidence_kind}",
+            row.created_at,
+            detail=f"{artifact.original_name if artifact else '未知文件'} · {artifact.sha256[:12] if artifact else '-'}",
+            author="本机工程师",
+            request="导入集中外部验证证据",
+            tool="内容寻址工件库",
+            status="recorded",
+            verification_level="manual_unverified",
+            source={"page": "release", "release_candidate_id": row.release_candidate_id, "evidence_id": row.id},
+            payload={
+                "candidate_version": candidate.version if candidate else None,
+                "evidence_kind": row.evidence_kind,
+                "source_artifact_id": row.source_artifact_id,
+                "note": row.note,
+            },
         )
 
     simulations = session.scalars(

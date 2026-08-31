@@ -30,6 +30,7 @@
 - P12 只读检测平台、Python、受控环境变量路径和 Adapter 能力；不启动厂商程序、不保存 PLC 写入凭据。
 - P09 生成绑定当前 Commit 的不可变候选 ZIP，Manifest 已记录锁定规格、原始 Excel、Control IR/TestSpec、自动审核、静态审计、参考模拟和人工证据哈希；包内还附带 `validation/EXTERNAL_VALIDATION_PACKAGE.json` 和可填写的 `validation/EXTERNAL_VALIDATION_CHECKLIST.md`。清单会按当前 Profile 展开所需软件、硬件台架、验证范围、精确基线、实际结果、证据哈希和签字栏，避免现场临时拼接验证步骤；候选状态仍为 external_validation_required。
 - P09 可重新读取候选 ZIP 并形成 automatic_integrity 完整性报告，还可汇总形成 automatic_passed_external_pending 项目自动验收报告；两种报告都不会替代任何集中外部验证项。
+- 集中验证产生的环境记录、导入/编译/模拟日志、截图、硬件测试报告和签字扫描件应上传到对应 P09 候选证据台账。每项证据绑定 RC、保存原文件名与 SHA-256，并固定标记 `manual_unverified`；上传不会回写不可变候选 ZIP，也不会自动把厂商、硬件或电气门标记为通过。
 - P10 生成目标指纹与只读变量映射，并接受离线 JSON 快照形成 manual_unverified 证据；当前未连接 PLC。由证据派生的调试工作只进入新的 engineer/commissioning-* 分支。
 - P11 可比较两个明确 Commit，并从历史 Commit 创建 restore/* 独立分支。恢复后的新 GenerationRun 只重新运行自动审核，不继承旧静态审计、参考模拟、候选包或人工/厂商证据。
 

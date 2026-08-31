@@ -14,6 +14,8 @@ import type {
   ProgramFile,
   Project,
   ReleaseCandidate,
+  ReleaseCandidateEvidence,
+  ReleaseEvidenceKind,
   SpecRevision,
   SimulationRun,
   MonitoringPlan,
@@ -46,6 +48,15 @@ function evidenceBodySerializer(body: { file: File; evidence_kind: string; expec
   form.append("file", body.file);
   form.append("evidence_kind", body.evidence_kind);
   if (body.expected_revision !== undefined) form.append("expected_revision", String(body.expected_revision));
+  return form;
+}
+
+function releaseEvidenceBodySerializer(body: { file: File; evidence_kind: ReleaseEvidenceKind; expected_candidate_revision: number; note?: string }) {
+  const form = new FormData();
+  form.append("file", body.file);
+  form.append("evidence_kind", body.evidence_kind);
+  form.append("expected_candidate_revision", String(body.expected_candidate_revision));
+  if (body.note) form.append("note", body.note);
   return form;
 }
 
@@ -258,6 +269,19 @@ export const api = {
     return ensure(await apiClient.GET("/api/v1/release-candidates/{candidate_id}/validation-material", {
       params: { path: { candidate_id: candidateId }, query: { kind } },
       parseAs: "blob",
+    }));
+  },
+  async listReleaseCandidateEvidence(candidateId: string): Promise<ReleaseCandidateEvidence[]> {
+    return ensure(await apiClient.GET("/api/v1/release-candidates/{candidate_id}/evidence", {
+      params: { path: { candidate_id: candidateId } },
+    }));
+  },
+  async uploadReleaseCandidateEvidence(candidate: ReleaseCandidate, file: File, evidenceKind: ReleaseEvidenceKind, note?: string): Promise<ReleaseCandidateEvidence> {
+    return ensure(await apiClient.POST("/api/v1/release-candidates/{candidate_id}/evidence", {
+      params: { path: { candidate_id: candidate.id } },
+      headers: { "If-Match": String(candidate.revision) },
+      body: { file, evidence_kind: evidenceKind, expected_candidate_revision: candidate.revision, note } as never,
+      bodySerializer: releaseEvidenceBodySerializer as never,
     }));
   },
   async listAcceptanceRuns(projectId: string): Promise<ProjectAcceptanceRun[]> {
