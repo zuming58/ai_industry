@@ -169,6 +169,9 @@ export type CompatibilityEntry = {
   program_language: string;
   adapter_id: string;
   vendor_tool: string;
+  required_software: string[];
+  hardware_prerequisites: string[];
+  external_validation_scope: string[];
   machine_spec: string;
   structured_text_generation: string;
   static_audit: string;

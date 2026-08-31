@@ -216,6 +216,15 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText("模型解释配置")).toBeVisible();
   await expect(page.getByText("PLC 兼容矩阵")).toBeVisible();
   await expect(page.getByText("模板版本历史")).toBeVisible();
+  const fx5uPrerequisites = page.locator(".profile-prerequisites article").filter({ hasText: "FX5U" }).first();
+  const h5uPrerequisites = page.locator(".profile-prerequisites article").filter({ hasText: "H5U" }).first();
+  await expect(fx5uPrerequisites.getByText("GX Works3", { exact: true })).toBeVisible();
+  await expect(fx5uPrerequisites.getByText("GX Simulator3", { exact: true })).toBeVisible();
+  await expect(fx5uPrerequisites.getByText("MX Component", { exact: true })).toBeVisible();
+  await expect(h5uPrerequisites.getByText("汇川 AutoShop", { exact: true })).toBeVisible();
+  await expect(fx5uPrerequisites.getByText("FX5U CPU", { exact: true })).toBeVisible();
+  await expect(h5uPrerequisites.getByText("H5U CPU", { exact: true })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
   await page.getByLabel("模型端点（可选）").fill("http://127.0.0.1:11434/v1");
   await page.getByLabel("模型名称（可选）").fill("e2e-explainer");
   await page.getByRole("button", { name: "保存本机设置" }).click();
