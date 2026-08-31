@@ -523,6 +523,72 @@ def test_release_candidate_evidence_is_immutable_scoped_and_unverified(
     assert all(item["verification_level"] == "manual_unverified" for item in ledger_events)
 
 
+def test_release_candidate_evidence_ledger_exports_bindings_and_hashes(
+    client: TestClient, project: dict, locked_example: dict
+) -> None:
+    run = _generated_run(client, project, locked_example, "generated/evidence-ledger")
+    simulation = client.post(
+        f"/api/v1/projects/{project['id']}/simulation-runs",
+        json={"generation_run_id": run["id"], "expected_generation_revision": run["revision"]},
+    )
+    assert simulation.status_code == 201, simulation.text
+    candidate_response = client.post(
+        f"/api/v1/projects/{project['id']}/release-candidates",
+        json={"generation_run_id": run["id"], "expected_generation_revision": run["revision"]},
+    )
+    assert candidate_response.status_code == 201, candidate_response.text
+    candidate = candidate_response.json()
+    evidence_response = client.post(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence",
+        headers={"If-Match": str(candidate["revision"])},
+        data={
+            "evidence_kind": "vendor_compile",
+            "expected_candidate_revision": candidate["revision"],
+            "note": "外部验证前导入的日志原件",
+        },
+        files={"file": ("compile.log", b"manual compile evidence", "text/plain")},
+    )
+    assert evidence_response.status_code == 201, evidence_response.text
+
+    ledger_response = client.get(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence-ledger",
+        params={"kind": "json"},
+    )
+    assert ledger_response.status_code == 200, ledger_response.text
+    ledger = ledger_response.json()
+    assert ledger["schema"] == "kongpu-release-evidence-ledger/v1"
+    assert ledger["candidate"]["id"] == candidate["id"]
+    assert ledger["candidate"]["manifest_hash"] == candidate["manifest_hash"]
+    assert ledger["candidate"]["package_sha256"] == candidate["package_sha256"]
+    assert ledger["baseline"]["program_commit_id"] == candidate["program_commit_id"]
+    assert ledger["baseline"]["machine_spec_hash"]
+    assert ledger["evidence"][0]["evidence_kind"] == "vendor_compile"
+    assert ledger["evidence"][0]["verification_level"] == "manual_unverified"
+    assert ledger["evidence"][0]["sha256"] == hashlib.sha256(b"manual compile evidence").hexdigest()
+    assert ledger_response.headers["etag"] == f'"{hashlib.sha256(ledger_response.content).hexdigest()}"'
+    assert ledger_response.headers["content-disposition"].endswith(
+        f'Kongpu-{candidate["version"]}-evidence-ledger.json"'
+    )
+
+    markdown_response = client.get(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence-ledger",
+        params={"kind": "markdown"},
+    )
+    assert markdown_response.status_code == 200, markdown_response.text
+    markdown = markdown_response.content.decode("utf-8")
+    assert "控谱候选包外部证据台账" in markdown
+    assert candidate["manifest_hash"] in markdown
+    assert "compile.log" in markdown
+    assert "manual_unverified" in markdown
+    assert markdown_response.headers["content-type"].startswith("text/markdown")
+
+    invalid = client.get(
+        f"/api/v1/release-candidates/{candidate['id']}/evidence-ledger",
+        params={"kind": "yaml"},
+    )
+    assert invalid.status_code == 422
+
+
 def test_release_candidate_rejects_uncommitted_branch(
     client: TestClient, project: dict, locked_example: dict
 ) -> None:

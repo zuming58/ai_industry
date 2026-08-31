@@ -775,6 +775,155 @@ def release_candidate_evidence_dict(
     }
 
 
+def release_candidate_evidence_ledger(
+    session: Session, candidate: ReleaseCandidate
+) -> dict[str, Any]:
+    """Build a deterministic, read-only ledger for external validation.
+
+    The ledger is derived from immutable candidate metadata and content-addressed
+    evidence.  It intentionally keeps every external item at
+    ``manual_unverified``; exporting a ledger must never change verification state.
+    """
+    package = session.get(SourceArtifact, candidate.package_artifact_id)
+    if package is None:
+        raise api_error(
+            "ARTIFACT_NOT_FOUND",
+            "候选包原始工件不存在",
+            409,
+            action="停止使用该候选包并检查本机工件库",
+        )
+    manifest = json.loads(candidate.manifest_json)
+    baseline = manifest.get("baseline", {})
+    evidence_rows = session.execute(
+        select(ReleaseCandidateEvidence, SourceArtifact)
+        .join(SourceArtifact, ReleaseCandidateEvidence.source_artifact_id == SourceArtifact.id)
+        .where(ReleaseCandidateEvidence.release_candidate_id == candidate.id)
+        .order_by(ReleaseCandidateEvidence.created_at, ReleaseCandidateEvidence.id)
+    ).all()
+    evidence = [
+        {
+            "id": item.id,
+            "evidence_kind": item.evidence_kind,
+            "verification_level": item.verification_level,
+            "note": item.note,
+            "original_name": artifact.original_name,
+            "media_type": artifact.media_type,
+            "size_bytes": artifact.size_bytes,
+            "sha256": artifact.sha256,
+            "source_artifact_id": artifact.id,
+            "created_at": item.created_at.isoformat(),
+            "updated_at": item.updated_at.isoformat(),
+        }
+        for item, artifact in evidence_rows
+    ]
+    verification = session.scalar(
+        select(ReleaseCandidateVerification)
+        .where(ReleaseCandidateVerification.release_candidate_id == candidate.id)
+        .order_by(ReleaseCandidateVerification.created_at.desc(), ReleaseCandidateVerification.id.desc())
+    )
+    verification_data = None
+    if verification is not None:
+        report = session.get(SourceArtifact, verification.report_artifact_id)
+        checks = json.loads(verification.checks_json)
+        verification_data = {
+            "id": verification.id,
+            "status": verification.status,
+            "verification_level": verification.verification_level,
+            "input_hash": verification.input_hash,
+            "report_artifact_id": verification.report_artifact_id,
+            "report_sha256": report.sha256 if report else None,
+            "summary": {
+                "total": len(checks),
+                "passed": sum(value.get("status") == "passed" for value in checks),
+                "failed": sum(value.get("status") == "failed" for value in checks),
+            },
+            "created_at": verification.created_at.isoformat(),
+        }
+    return {
+        "schema": "kongpu-release-evidence-ledger/v1",
+        "as_of": max(
+            [candidate.updated_at.isoformat(), *[item["updated_at"] for item in evidence]]
+        ),
+        "candidate": {
+            "id": candidate.id,
+            "version": candidate.version,
+            "project_id": candidate.project_id,
+            "status": candidate.status,
+            "verification_level": candidate.verification_level,
+            "revision": candidate.revision,
+            "manifest_hash": candidate.manifest_hash,
+            "package_artifact_id": package.id,
+            "package_sha256": package.sha256,
+            "package_size_bytes": package.size_bytes,
+        },
+        "baseline": {
+            "generation_run_id": baseline.get("generation_run_id"),
+            "program_commit_id": baseline.get("program_commit_id"),
+            "git_sha": baseline.get("git_sha"),
+            "machine_spec_hash": baseline.get("machine_spec_hash"),
+            "control_ir_hash": baseline.get("control_ir_hash"),
+            "test_spec_hash": baseline.get("test_spec_hash"),
+            "generator_version": baseline.get("generator_version"),
+        },
+        "external_validation_gates": manifest.get("external_validation_gates", []),
+        "candidate_verification": verification_data,
+        "evidence": evidence,
+        "claim_boundary": manifest.get("claim_boundary", ""),
+    }
+
+
+def render_release_candidate_evidence_ledger(ledger: dict[str, Any]) -> bytes:
+    """Render a compact Markdown ledger for a human validation packet."""
+    candidate = ledger["candidate"]
+    baseline = ledger["baseline"]
+    lines = [
+        "# 控谱候选包外部证据台账",
+        "",
+        f"- Schema：`{ledger['schema']}`",
+        f"- 截止时间：`{ledger['as_of']}`",
+        f"- 候选包：`{candidate['version']}`（{candidate['status']} / {candidate['verification_level']}）",
+        f"- Candidate ID：`{candidate['id']}`",
+        f"- Manifest SHA-256：`{candidate['manifest_hash']}`",
+        f"- ZIP SHA-256：`{candidate['package_sha256']}`",
+        f"- ZIP 大小：`{candidate['package_size_bytes']}` bytes",
+        "",
+        "## 生成基线",
+        "",
+        "| 项目 | 值 |",
+        "| --- | --- |",
+    ]
+    baseline_labels = {
+        "generation_run_id": "Generation Run",
+        "program_commit_id": "Program Commit",
+        "git_sha": "Git SHA",
+        "machine_spec_hash": "MachineSpec SHA-256",
+        "control_ir_hash": "Control IR SHA-256",
+        "test_spec_hash": "TestSpec SHA-256",
+        "generator_version": "生成器版本",
+    }
+    for key, label in baseline_labels.items():
+        lines.append(f"| {label} | `{baseline.get(key) or '-'}` |")
+    lines.extend(["", "## 证据条目", "", "| 类型 | 原件 | SHA-256 | 大小 | 验证等级 | 备注 |", "| --- | --- | --- | ---: | --- | --- |"])
+    if ledger["evidence"]:
+        for item in ledger["evidence"]:
+            note = (item.get("note") or "").replace("|", "\\|").replace("\n", " ")
+            lines.append(
+                f"| `{item['evidence_kind']}` | `{item['original_name']}` | `{item['sha256']}` | {item['size_bytes']} | `{item['verification_level']}` | {note or '-'} |"
+            )
+    else:
+        lines.append("| - | 尚无候选外部证据 | - | - | `manual_unverified` | 集中验证后上传 |")
+    lines.extend(["", "## 外部验证门", "", "| 门 | 状态 | 所需证据 |", "| --- | --- | --- |"])
+    for gate in ledger["external_validation_gates"]:
+        lines.append(f"| {gate.get('title', gate.get('id', '-'))} | `{gate.get('status', '-')}` | {gate.get('required_evidence', '-')} |")
+    lines.extend([
+        "",
+        "> 验证等级 `manual_unverified` 仅表示原件已按 SHA-256 保存；上传或导出不会升级厂商、硬件或电气验证结论。",
+        "> " + ledger["claim_boundary"],
+        "",
+    ])
+    return "\n".join(lines).encode("utf-8")
+
+
 def _readiness_for_run(
     session: Session, project: Project, run: GenerationRun
 ) -> dict[str, Any]:
@@ -2327,6 +2476,62 @@ def list_release_candidate_evidence(
         .order_by(ReleaseCandidateEvidence.created_at.desc(), ReleaseCandidateEvidence.id)
     ).all()
     return [release_candidate_evidence_dict(session, item) for item in items]
+
+
+@router.get("/api/v1/release-candidates/{candidate_id}/evidence-ledger")
+def download_release_candidate_evidence_ledger(
+    candidate_id: str,
+    kind: str = Query(pattern="^(json|markdown)$"),
+    runtime_settings: Settings = Depends(app_settings),
+    session: Session = Depends(app_session),
+) -> Response:
+    """Export the candidate's immutable evidence ledger without mutating state."""
+    candidate = session.get(ReleaseCandidate, candidate_id)
+    if candidate is None:
+        raise api_error("RELEASE_CANDIDATE_NOT_FOUND", "交付候选包不存在", 404)
+    package_record, package_bytes = read_artifact_bytes(
+        session, runtime_settings, candidate.package_artifact_id
+    )
+    try:
+        manifest = verify_delivery_candidate(package_bytes)
+    except DeliveryInputError as exc:
+        raise api_error(
+            "DELIVERY_PACKAGE_VERIFICATION_FAILED",
+            str(exc),
+            409,
+            action="停止使用该候选包并检查本机工件库",
+        ) from exc
+    if sha256_bytes(package_bytes) != package_record.sha256:
+        raise api_error(
+            "DELIVERY_PACKAGE_VERIFICATION_FAILED",
+            "候选包工件哈希校验失败",
+            409,
+            action="停止使用该候选包并检查本机工件库",
+        )
+    if manifest != json.loads(candidate.manifest_json) or sha256_bytes(stable_json_bytes(manifest)) != candidate.manifest_hash:
+        raise api_error(
+            "DELIVERY_MANIFEST_MISMATCH",
+            "包内 Manifest 与候选记录不一致",
+            409,
+            action="停止使用该候选包并重新生成候选",
+        )
+    ledger = release_candidate_evidence_ledger(session, candidate)
+    if kind == "json":
+        content = stable_json_bytes(ledger)
+        media_type = "application/json"
+        suffix = "evidence-ledger.json"
+    else:
+        content = render_release_candidate_evidence_ledger(ledger)
+        media_type = "text/markdown; charset=utf-8"
+        suffix = "evidence-ledger.md"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="Kongpu-{candidate.version}-{suffix}"',
+            "ETag": f'"{sha256_bytes(content)}"',
+        },
+    )
 
 
 @router.post("/api/v1/release-candidates/{candidate_id}/evidence", status_code=201)

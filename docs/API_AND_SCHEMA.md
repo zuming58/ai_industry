@@ -103,6 +103,8 @@ AutomatedReviewRun 以 generation_run_id、review_version 和 input_hash 唯一�
 
 候选级外部证据使用 `GET/POST /api/v1/release-candidates/{candidate_id}/evidence`。上传字段为 `file`、固定枚举 `evidence_kind`、可选 `note` 与 `expected_candidate_revision`，并接受 `If-Match`；上限 20 MB。原件进入 SHA-256 内容寻址工件库，同一候选、同一类型、同一源工件重复上传时复用原记录。证据类型固定为 `environment`、`vendor_import`、`vendor_compile`、`vendor_simulation`、`hardware_test`、`electrical_signoff` 和 `other`。所有上传结果固定为 `manual_unverified`，只进入候选证据台账和项目时间线，不修改不可变候选 ZIP/Manifest，不改变 `external_validation_required` 状态，也不升级厂商工具、硬件或电气验证等级。
 
+候选证据台账可通过 `GET /api/v1/release-candidates/{candidate_id}/evidence-ledger?kind=json|markdown` 导出。导出为只读操作，JSON 使用 `kongpu-release-evidence-ledger/v1` 契约，Markdown 适合打印或集中验证时填写；两种格式均绑定候选版本、Manifest/ZIP SHA-256、GenerationRun、Program Commit、Git SHA、MachineSpec/Control IR/TestSpec 哈希、生成器版本、外部验证门和全部候选级证据原件哈希。台账的 `as_of` 取候选及证据更新时间，内容按稳定顺序生成并通过 ETag 返回；导出不会创建版本、改变候选 revision 或升级任何验证等级。
+
 就绪度预检为只读接口，按当前生成任务的锁定规格、分支 head Commit、自动审核、静态审计、参考模拟、候选 ZIP 和候选完整性复核逐项返回 `ready`/`remaining`。响应还按当前 PLC Profile 返回 `prerequisites.software`、`prerequisites.hardware` 和 `prerequisites.validation_scope`，供 P09 直接生成集中验证准备清单。全部本机门满足时状态为 `ready_for_external_validation`，但 `external_validation_gates` 仍保持 `pending_external`；预检不创建工件、不修改版本，也不升级厂商、硬件或电气验证等级。
 
 候选完整性复核会重新读取内容寻址 ZIP，并核对外层工件 SHA-256、路径穿越、重复条目、条目数与解压体积上限、包内 Manifest、逐项 SHA-256/大小，以及 GenerationRun/ProgramCommit 基线。相同候选内容只复用原 ReleaseCandidateVerification；验证等级 automatic_integrity 只表示 ZIP 完整性自动验证通过。

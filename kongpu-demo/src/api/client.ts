@@ -271,6 +271,12 @@ export const api = {
       parseAs: "blob",
     }));
   },
+  async downloadEvidenceLedger(candidateId: string, kind: "json" | "markdown"): Promise<Blob> {
+    return ensure(await apiClient.GET("/api/v1/release-candidates/{candidate_id}/evidence-ledger", {
+      params: { path: { candidate_id: candidateId }, query: { kind } },
+      parseAs: "blob",
+    }));
+  },
   async listReleaseCandidateEvidence(candidateId: string): Promise<ReleaseCandidateEvidence[]> {
     return ensure(await apiClient.GET("/api/v1/release-candidates/{candidate_id}/evidence", {
       params: { path: { candidate_id: candidateId } },
