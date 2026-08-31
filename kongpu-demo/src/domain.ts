@@ -425,6 +425,7 @@ export type ProjectReadiness = {
   checks: Array<{ id: string; title: string; status: "ready" | "remaining"; detail: string }>;
   summary: { total: number; ready: number; remaining: number; external_pending: number };
   external_validation_gates: ExternalValidationGate[];
+  prerequisites: { software: string[]; hardware: string[]; validation_scope: string[] };
   claim_boundary: string;
 };
 

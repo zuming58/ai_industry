@@ -104,6 +104,15 @@ def test_inovance_h5u_profile_template_generation_audit_and_reference_simulation
     assert simulation.status_code == 201, simulation.text
     assert simulation.json()["verification_level"] == "automatic_reference"
 
+    readiness = client.get(
+        f"/api/v1/projects/{project['id']}/readiness",
+        params={"generation_run_id": run["id"]},
+    )
+    assert readiness.status_code == 200, readiness.text
+    assert readiness.json()["prerequisites"]["software"] == ["汇川 AutoShop"]
+    assert "H5U CPU" in readiness.json()["prerequisites"]["hardware"]
+    assert "H5U I/O 与断电/断线恢复" in readiness.json()["prerequisites"]["validation_scope"]
+
     candidate_response = client.post(
         f"/api/v1/projects/{project['id']}/release-candidates",
         json={

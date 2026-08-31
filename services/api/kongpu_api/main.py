@@ -773,6 +773,11 @@ def _readiness_for_run(
         candidate={"id": candidate.id} if candidate else None,
         candidate_verification={"status": candidate_verification.status} if candidate_verification else None,
         external_gates=external_validation_gates(spec_data),
+        prerequisites={
+            "software": list(profile.required_software),
+            "hardware": list(profile.hardware_prerequisites),
+            "validation_scope": list(profile.external_validation_scope),
+        },
     )
 
 
@@ -2135,6 +2140,11 @@ def project_readiness(
         candidate=None,
         candidate_verification=None,
         external_gates=external_validation_gates({"plc_target": {"brand": project.plc_brand, "series": project.plc_series, "model": project.plc_model}}),
+        prerequisites={
+            "software": list(profile.required_software),
+            "hardware": list(profile.hardware_prerequisites),
+            "validation_scope": list(profile.external_validation_scope),
+        },
     )
 
 

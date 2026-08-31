@@ -123,6 +123,10 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   await expect(page.getByText("external_validation_required").first()).toBeVisible();
   await expect(page.getByText("automatic_package")).toBeVisible();
   await expect(page.getByText("集中外部验证门")).toBeVisible();
+  const releasePrerequisites = page.locator(".release-prerequisites");
+  await expect(releasePrerequisites.getByText("GX Works3", { exact: true })).toBeVisible();
+  await expect(releasePrerequisites.getByText("FX5U CPU", { exact: true })).toBeVisible();
+  await expect(releasePrerequisites.getByText("FX5U I/O 与断电/断线恢复", { exact: true })).toBeVisible();
   await expect(page.getByText("GX Works3 导入与 Rebuild All")).toBeVisible();
   await page.getByRole("button", { name: "独立复核 ZIP" }).click();
   await expect(page.getByText("候选 ZIP 已重新读取并通过独立完整性复核")).toBeVisible();

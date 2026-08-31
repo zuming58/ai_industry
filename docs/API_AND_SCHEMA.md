@@ -100,7 +100,7 @@ AutomatedReviewRun 以 generation_run_id、review_version 和 input_hash 唯一�
 
 交付候选创建必须绑定当前 GenerationRun、当前分支 head Commit、passed 自动审核、无 blocker 静态审计和当前 Commit 的 review_ready 参考模拟。分支存在未提交修改时返回 409。候选 ZIP 使用固定时间戳和排序条目生成，MANIFEST.json 记录基线、外部验证门、文件 SHA-256 与大小；同时包含 `validation/EXTERNAL_VALIDATION_PACKAGE.json` 和 `validation/EXTERNAL_VALIDATION_CHECKLIST.md`，两者绑定当前 PLC Profile、锁定规格哈希、Program Commit、生成器、TestSpec 和外部验证门。相同 project_id + input_hash 只复用原候选。状态固定为 external_validation_required，验证等级固定为 automatic_package；验证包中的 `manual_unverified` 不会被 ZIP 生成或证据上传自动升级。
 
-就绪度预检为只读接口，按当前生成任务的锁定规格、分支 head Commit、自动审核、静态审计、参考模拟、候选 ZIP 和候选完整性复核逐项返回 `ready`/`remaining`。全部本机门满足时状态为 `ready_for_external_validation`，但 `external_validation_gates` 仍保持 `pending_external`；预检不创建工件、不修改版本，也不升级厂商、硬件或电气验证等级。
+就绪度预检为只读接口，按当前生成任务的锁定规格、分支 head Commit、自动审核、静态审计、参考模拟、候选 ZIP 和候选完整性复核逐项返回 `ready`/`remaining`。响应还按当前 PLC Profile 返回 `prerequisites.software`、`prerequisites.hardware` 和 `prerequisites.validation_scope`，供 P09 直接生成集中验证准备清单。全部本机门满足时状态为 `ready_for_external_validation`，但 `external_validation_gates` 仍保持 `pending_external`；预检不创建工件、不修改版本，也不升级厂商、硬件或电气验证等级。
 
 候选完整性复核会重新读取内容寻址 ZIP，并核对外层工件 SHA-256、路径穿越、重复条目、条目数与解压体积上限、包内 Manifest、逐项 SHA-256/大小，以及 GenerationRun/ProgramCommit 基线。相同候选内容只复用原 ReleaseCandidateVerification；验证等级 automatic_integrity 只表示 ZIP 完整性自动验证通过。
 

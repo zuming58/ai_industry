@@ -19,6 +19,7 @@ def build_readiness_report(
     candidate: dict[str, Any] | None,
     candidate_verification: dict[str, Any] | None,
     external_gates: list[dict[str, Any]],
+    prerequisites: dict[str, list[str]],
 ) -> dict[str, Any]:
     checks = [
         _check("project", "项目目标", bool(project.get("id") and target.get("model")), "项目与 PLC 目标已解析。" if project.get("id") and target.get("model") else "缺少项目或 PLC 目标。"),
@@ -45,6 +46,11 @@ def build_readiness_report(
             "external_pending": len(external_gates),
         },
         "external_validation_gates": external_gates,
+        "prerequisites": {
+            "software": list(prerequisites.get("software", [])),
+            "hardware": list(prerequisites.get("hardware", [])),
+            "validation_scope": list(prerequisites.get("validation_scope", [])),
+        },
         "claim_boundary": "本报告只反映本机确定性门禁；AutoShop/GX Works3 编译、厂商模拟、真实 PLC、硬件和电气工程师确认仍为 pending_external。",
     }
 

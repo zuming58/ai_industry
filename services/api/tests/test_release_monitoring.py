@@ -80,6 +80,9 @@ def test_readiness_reports_automatic_work_without_upgrading_external_gates(
     assert states["reference_simulation"] == "remaining"
     assert states["candidate"] == "remaining"
     assert {item["status"] for item in pending["external_validation_gates"]} == {"pending_external"}
+    assert pending["prerequisites"]["software"] == ["GX Works3", "GX Simulator3", "MX Component"]
+    assert "FX5U CPU" in pending["prerequisites"]["hardware"]
+    assert "FX5U I/O 与断电/断线恢复" in pending["prerequisites"]["validation_scope"]
 
     simulation = client.post(
         f"/api/v1/projects/{project['id']}/simulation-runs",
