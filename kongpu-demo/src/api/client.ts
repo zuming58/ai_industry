@@ -107,7 +107,7 @@ export const api = {
   async getImport(id: string): Promise<ImportVersion> {
     return ensure(await apiClient.GET("/api/v1/imports/{import_id}", { params: { path: { import_id: id } } }));
   },
-  async downloadImportValidationReport(id: string, kind: "json" | "markdown"): Promise<Blob> {
+  async downloadImportValidationReport(id: string, kind: "json" | "markdown" | "xlsx"): Promise<Blob> {
     return ensure(await apiClient.GET("/api/v1/imports/{import_id}/validation-report", {
       params: { path: { import_id: id }, query: { kind } },
       parseAs: "blob",

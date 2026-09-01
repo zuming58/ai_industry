@@ -233,6 +233,34 @@ def test_validation_report_is_bound_deterministic_and_read_only(
     assert imported_example["artifact"]["sha256"] in markdown.text
     assert imported_example["revision"]["content_hash"] in markdown.text
 
+    annotated = client.get(
+        f"/api/v1/imports/{import_id}/validation-report",
+        params={"kind": "xlsx"},
+    )
+    annotated_repeat = client.get(
+        f"/api/v1/imports/{import_id}/validation-report",
+        params={"kind": "xlsx"},
+    )
+    assert annotated.status_code == 200, annotated.text
+    assert annotated_repeat.status_code == 200, annotated_repeat.text
+    assert annotated.content == annotated_repeat.content
+    assert annotated.headers["etag"] == annotated_repeat.headers["etag"]
+    assert annotated.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert annotated.headers["content-disposition"].endswith(
+        f'{project["code"]}-validation-report.xlsx"'
+    )
+    annotated_workbook = load_workbook(io.BytesIO(annotated.content), data_only=False)
+    assert annotated_workbook.sheetnames[0].startswith("ValidationReport")
+    report_values = [
+        cell.value
+        for row in annotated_workbook[annotated_workbook.sheetnames[0]].iter_rows()
+        for cell in row
+    ]
+    assert imported_example["revision"]["content_hash"] in report_values
+    assert imported_example["artifact"]["sha256"] in report_values
+
     after = client.get(f"/api/v1/imports/{import_id}").json()
     assert after == before
     assert client.get(
@@ -281,6 +309,43 @@ def test_validation_report_keeps_projects_isolated(
         first_report["import"]["source_artifact"]["id"]
         != other_report["import"]["source_artifact"]["id"]
     )
+
+
+def test_annotated_validation_report_marks_problem_cells(
+    client: TestClient,
+    project: dict,
+) -> None:
+    template = client.post(f"/api/v1/projects/{project['id']}/templates?kind=example")
+    assert template.status_code == 200, template.text
+    workbook = load_workbook(io.BytesIO(template.content), data_only=False)
+    workbook["Sequence"]["F2"] = "MISSING_STEP"
+    content = io.BytesIO()
+    workbook.save(content)
+    imported = client.post(
+        f"/api/v1/projects/{project['id']}/imports",
+        files={
+            "file": (
+                "invalid-sequence.xlsx",
+                content.getvalue(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+    assert imported.status_code == 201, imported.text
+    import_id = imported.json()["import"]["id"]
+    report = client.get(
+        f"/api/v1/imports/{import_id}/validation-report",
+        params={"kind": "xlsx"},
+    )
+    assert report.status_code == 200, report.text
+    marked = load_workbook(io.BytesIO(report.content), data_only=False)
+    sequence_cell = marked["Sequence"]["F2"]
+    assert sequence_cell.comment is not None
+    assert "NEXT_STEP_MISSING" in sequence_cell.comment.text
+    assert sequence_cell.fill.fill_type == "solid"
+    summary = marked[marked.sheetnames[0]]
+    summary_values = [cell.value for row in summary.iter_rows() for cell in row]
+    assert "NEXT_STEP_MISSING" in summary_values
 
 
 def test_lock_gate_and_snapshot(

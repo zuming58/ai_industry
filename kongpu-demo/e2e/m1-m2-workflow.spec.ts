@@ -43,6 +43,9 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   const importValidationMarkdownDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "校验报告 Markdown" }).click();
   expect((await importValidationMarkdownDownload).suggestedFilename()).toContain("validation-report.md");
+  const importValidationWorkbookDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载标记 Excel" }).click();
+  expect((await importValidationWorkbookDownload).suggestedFilename()).toContain("validation-report.xlsx");
   await expectNoHorizontalOverflow(page);
 
   await page.getByRole("link", { name: "P05 规格审阅" }).click();

@@ -12,6 +12,10 @@ from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPExcepti
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from openpyxl.comments import Comment
+from openpyxl import load_workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -1783,6 +1787,105 @@ def render_import_validation_report_markdown(report: dict[str, Any]) -> bytes:
         lines.append("| - | - | 当前 revision 没有校验问题 | - | - | - | - |")
     lines.extend(["", "> " + report["claim_boundary"], ""])
     return "\n".join(lines).encode("utf-8")
+
+
+def render_import_validation_workbook(
+    source_content: bytes, report: dict[str, Any]
+) -> bytes:
+    """Create a marked review copy without mutating the immutable source workbook."""
+    try:
+        workbook = load_workbook(
+            io.BytesIO(source_content), data_only=False, read_only=False, keep_vba=False
+        )
+    except Exception as exc:
+        raise WorkbookInputError("WORKBOOK_OPEN_FAILED", "原始工作簿无法生成标记副本") from exc
+
+    fills = {
+        "blocker": PatternFill("solid", fgColor="F8D7DA"),
+        "warning": PatternFill("solid", fgColor="FFF3CD"),
+        "suggestion": PatternFill("solid", fgColor="DDEBF7"),
+        "info": PatternFill("solid", fgColor="E2F0D9"),
+    }
+    issue_sheet = "ValidationReport"
+    if issue_sheet in workbook.sheetnames:
+        suffix = 2
+        while f"ValidationReport_{suffix}" in workbook.sheetnames:
+            suffix += 1
+        issue_sheet = f"ValidationReport_{suffix}"
+    report_sheet = workbook.create_sheet(issue_sheet, 0)
+    report_sheet.append(["控谱 MachineSpec 校验报告"])
+    report_sheet.append(["Schema", report["schema"]])
+    report_sheet.append(["项目", report["project"]["name"]])
+    report_sheet.append(["项目代码", report["project"]["code"]])
+    target = report["project"]["plc_target"]
+    report_sheet.append(["PLC 目标", f"{target['brand']} {target['series']} {target['model']}"])
+    report_sheet.append(["MachineSpec revision", report["spec_revision"]["id"]])
+    report_sheet.append(["MachineSpec SHA-256", report["spec_revision"]["content_hash"]])
+    source = report["import"]["source_artifact"]
+    report_sheet.append(["原始 Excel SHA-256", source["sha256"]])
+    report_sheet.append(["原始 Excel", source["original_name"]])
+    report_sheet.append([])
+    report_sheet.append(["等级", "Code", "标题", "工作表", "行", "列", "对象 ID", "状态/接受理由", "详情"])
+    header_row = report_sheet.max_row
+    for cell in report_sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1F4E78")
+    for cell in report_sheet[header_row]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="5B9BD5")
+    for issue in report["issues"]:
+        reason = issue.get("accepted_reason") or (
+            "resolved" if issue["resolved"] else "unresolved"
+        )
+        report_sheet.append([
+            issue["severity"], issue["code"], issue["title"], issue.get("sheet") or "全局",
+            issue.get("row_number"), issue.get("column_name"), issue.get("entity_id") or "",
+            reason, issue["detail"],
+        ])
+        for cell in report_sheet[report_sheet.max_row]:
+            cell.fill = fills.get(issue["severity"], fills["info"])
+    if not report["issues"]:
+        report_sheet.append(["-", "-", "当前 revision 没有校验问题"])
+    report_sheet.freeze_panes = f"A{header_row + 1}"
+    report_sheet.auto_filter.ref = f"A{header_row}:I{report_sheet.max_row}"
+    widths = {"A": 14, "B": 26, "C": 30, "D": 18, "E": 10, "F": 20, "G": 26, "H": 24, "I": 80}
+    for column, width in widths.items():
+        report_sheet.column_dimensions[column].width = width
+
+    for issue in report["issues"]:
+        sheet_name = issue.get("sheet")
+        if not sheet_name or sheet_name not in workbook.sheetnames:
+            continue
+        worksheet = workbook[sheet_name]
+        row_number = issue.get("row_number") or 1
+        column_name = issue.get("column_name")
+        column_index = None
+        if column_name:
+            headers = {
+                str(cell.value).strip(): cell.column
+                for cell in worksheet[1]
+                if cell.value is not None
+            }
+            column_index = headers.get(str(column_name).strip())
+            if column_index is None and str(column_name).isalpha():
+                column_index = worksheet[str(column_name) + "1"].column
+        target_cell = worksheet.cell(
+            row=max(1, int(row_number)), column=column_index or 1
+        )
+        target_cell.fill = fills.get(issue["severity"], fills["info"])
+        source_text = f"{sheet_name}!{get_column_letter(target_cell.column)}{target_cell.row}"
+        comment = (
+            f"[{issue['severity']}] {issue['code']}\n{issue['title']}\n{issue['detail']}\n"
+            f"来源定位：{source_text}\n对象 ID：{issue.get('entity_id') or '-'}\n"
+            "此文件是校验标记副本，原始 Excel 保持不可变。"
+        )
+        if target_cell.comment:
+            comment = target_cell.comment.text + "\n\n" + comment
+        target_cell.comment = Comment(comment, "控谱校验器")
+
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 def revision_dict(session: Session, revision: MachineSpecRevision) -> dict[str, Any]:
@@ -4143,7 +4246,8 @@ def get_import_issues(import_id: str, session: Session = Depends(app_session)) -
 @router.get("/api/v1/imports/{import_id}/validation-report")
 def download_import_validation_report(
     import_id: str,
-    kind: str = Query(pattern="^(json|markdown)$"),
+    kind: str = Query(pattern="^(json|markdown|xlsx)$"),
+    runtime_settings: Settings = Depends(app_settings),
     session: Session = Depends(app_session),
 ) -> Response:
     """Export the current deterministic validation result without mutating state."""
@@ -4155,10 +4259,29 @@ def download_import_validation_report(
         content = stable_json_bytes(report)
         media_type = "application/json"
         suffix = "validation-report.json"
-    else:
+    elif kind == "markdown":
         content = render_import_validation_report_markdown(report)
         media_type = "text/markdown; charset=utf-8"
         suffix = "validation-report.md"
+    else:
+        try:
+            source_artifact = session.get(SourceArtifact, item.source_artifact_id)
+            if source_artifact is None:
+                raise ArtifactIntegrityError("ARTIFACT_NOT_FOUND", "原始 Excel 工件不存在")
+            source_content = read_stored_bytes(runtime_settings, source_artifact)
+        except ArtifactIntegrityError as exc:
+            raise api_error(
+                "ARTIFACT_READ_FAILED",
+                "无法读取原始 Excel，不能生成标记副本",
+                409,
+                action="停止使用该导入版本并检查本机工件库",
+            ) from exc
+        try:
+            content = render_import_validation_workbook(source_content, report)
+        except WorkbookInputError as exc:
+            raise api_error(exc.code, str(exc), 409, action="保留原文件并重新上传有效模板") from exc
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        suffix = "validation-report.xlsx"
     return Response(
         content=content,
         media_type=media_type,
