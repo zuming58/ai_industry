@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 
 from .database import Base
 
@@ -22,7 +22,13 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
-class Project(Base, TimestampMixin):
+class OptimisticRevisionMixin:
+    @declared_attr.directive
+    def __mapper_args__(cls):
+        return {"version_id_col": cls.revision, "version_id_generator": False}
+
+
+class Project(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "projects"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -52,7 +58,7 @@ class TemplateVersion(Base, TimestampMixin):
     definition_json: Mapped[str] = mapped_column(Text)
 
 
-class AppSetting(Base, TimestampMixin):
+class AppSetting(Base, TimestampMixin, OptimisticRevisionMixin):
     """Non-secret local application settings.
 
     Secrets are intentionally not represented by this model. Values are
@@ -91,7 +97,7 @@ class SourceArtifact(Base, TimestampMixin):
     relative_path: Mapped[str] = mapped_column(String(512))
 
 
-class ImportVersion(Base, TimestampMixin):
+class ImportVersion(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "import_versions"
     __table_args__ = (UniqueConstraint("project_id", "version", name="uq_project_import_version"),)
 
@@ -110,7 +116,7 @@ class ImportVersion(Base, TimestampMixin):
     spec_revisions: Mapped[list[MachineSpecRevision]] = relationship(back_populates="import_version", cascade="all, delete-orphan")
 
 
-class MachineSpecRevision(Base, TimestampMixin):
+class MachineSpecRevision(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "machine_spec_revisions"
     __table_args__ = (UniqueConstraint("import_id", "sequence", name="uq_import_spec_sequence"),)
 
@@ -188,7 +194,7 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
-class ProgramWorkspace(Base, TimestampMixin):
+class ProgramWorkspace(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "program_workspaces"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -197,7 +203,7 @@ class ProgramWorkspace(Base, TimestampMixin):
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
-class ProgramBranch(Base, TimestampMixin):
+class ProgramBranch(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "program_branches"
     __table_args__ = (UniqueConstraint("workspace_id", "name", name="uq_workspace_branch_name"),)
 
@@ -222,7 +228,7 @@ class ControlIRRevision(Base, TimestampMixin):
     data_json: Mapped[str] = mapped_column(Text)
 
 
-class GenerationRun(Base, TimestampMixin):
+class GenerationRun(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "generation_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -293,7 +299,7 @@ class ProgramCommit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
-class AdapterEnvironment(Base, TimestampMixin):
+class AdapterEnvironment(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "adapter_environments"
     __table_args__ = (UniqueConstraint("project_id", "adapter_id", "fingerprint", name="uq_adapter_environment_fingerprint"),)
 
@@ -354,7 +360,7 @@ class AutomatedReviewRun(Base, TimestampMixin):
     report_artifact_id: Mapped[str] = mapped_column(ForeignKey("source_artifacts.id"))
 
 
-class CompileRun(Base, TimestampMixin):
+class CompileRun(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "compile_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -382,7 +388,7 @@ class EvidenceArtifact(Base, TimestampMixin):
     verification_level: Mapped[str] = mapped_column(String(40), default="manual_unverified")
 
 
-class SimulationRun(Base, TimestampMixin):
+class SimulationRun(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "simulation_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -410,7 +416,7 @@ class SimulationTrace(Base):
     events_json: Mapped[str] = mapped_column(Text, default="[]")
 
 
-class ReleaseCandidate(Base, TimestampMixin):
+class ReleaseCandidate(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "release_candidates"
     __table_args__ = (
         UniqueConstraint("project_id", "input_hash", name="uq_release_candidate_input"),
@@ -528,7 +534,7 @@ class ProjectAcceptanceRun(Base, TimestampMixin):
     )
 
 
-class MonitoringPlan(Base, TimestampMixin):
+class MonitoringPlan(Base, TimestampMixin, OptimisticRevisionMixin):
     __tablename__ = "monitoring_plans"
     __table_args__ = (UniqueConstraint("release_candidate_id", name="uq_monitoring_plan_candidate"),)
 

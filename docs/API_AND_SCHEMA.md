@@ -7,7 +7,7 @@
 - MachineSpec JSON Schema：GET /api/v1/schemas/machine-spec/v1
 - 前端生成类型：kongpu-demo/src/api/schema.d.ts
 
-前端只通过 openapi-fetch 客户端访问后端。接口 ID 为 UUID，时间为 UTC ISO 8601；可变对象带 revision，过期写入返回 HTTP 409。
+前端只通过 openapi-fetch 客户端访问后端。接口 ID 为 UUID，时间为 UTC ISO 8601；可变对象带 revision。需要前置版本的接口缺失 revision/If-Match 返回 428，非法 ETag 返回 400，过期或不一致写入返回 409；关键 revision 实体还使用数据库 UPDATE 版本谓词阻止检查后的竞态覆盖。
 
 ## M1 接口
 
@@ -149,6 +149,8 @@ Excel 工作表：
 
 对象使用稳定 ID，显示名称与 ID 分离；跨对象关系只使用 ID；工程数值应携带单位；每个主要对象保存 source.sheet 与 source.row。
 
+首版确定性 ST 动作子集为 `信号 := 表达式`，目标只能是 DO、AO、INTERNAL 或 COMM。其他自然语言动作会在锁定前产生 `ACTION_NOT_DETERMINISTIC` warning，并在生成程序中保留 TODO。Exceptions 当前进入 Control IR 与 TestSpec，但厂商 ST 计时器、报警输出和复位逻辑尚未生成，会产生 `EXCEPTION_VENDOR_LOGIC_REQUIRED` warning；接受 warning 只记录工程理由，不升级厂商、硬件或电气验证等级。
+
 ## 状态与错误
 
 - 导入：uploaded → parsing → blocked 或 review_ready → reviewing → locked，目标变化后可为 stale。
@@ -162,7 +164,7 @@ Excel 工作表：
 - 锁定规格生成不可变 JSON 快照和内容哈希。
 - 程序生成进入独立分支，保存与提交不覆盖已有 Commit。
 - 文件路径经过仓库根目录守卫，拒绝路径穿越。
-- expected_revision 或 If-Match 不匹配时返回 409，禁止静默覆盖。
+- 需要并发前置条件的接口必须携带 expected_revision 或 If-Match；缺失返回 428，非法格式返回 400，不匹配返回 409。数据库提交同时校验旧 revision，禁止检查后竞态静默覆盖。
 - 工件读取先检查数据库元数据、磁盘大小和 SHA-256，再加载内容；单个工件默认上限 150 MiB，异常会返回 `ARTIFACT_TOO_LARGE`、`ARTIFACT_SIZE_MISMATCH` 或 `ARTIFACT_HASH_MISMATCH`。
 - XLSX 只接受未加密 `.xlsx`：拒绝绝对路径、盘符路径、`.`/`..` 内部路径、重复 ZIP 条目、宏/ActiveX 内容和超限解压体积。
 - 每个项目 Git 工作树在进程内按仓库串行化；可变请求取得锁后重新读取 revision，文件写入先整体校验并采用临时文件原子替换。仓库限制为最多 2,000 个文件、100 MiB 总体积、单文件 8 MiB。

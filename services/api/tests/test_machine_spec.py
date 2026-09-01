@@ -3,10 +3,13 @@ from __future__ import annotations
 import io
 import zipfile
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+from sqlalchemy.orm.exc import StaleDataError
 
 from kongpu_api.config import Settings
+from kongpu_api.models import Project
 from kongpu_api.machine_spec import (
     WorkbookInputError,
     generate_workbook,
@@ -41,6 +44,22 @@ def test_template_round_trip_and_hash_is_stable(tmp_path) -> None:
     assert spec_hash(spec) == spec_hash(dict(reversed(list(spec.items()))))
 
 
+def test_template_meta_project_and_schema_are_enforced(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    workbook = load_workbook(io.BytesIO(generate_workbook(project_payload(), kind="example")))
+    meta = workbook["_meta"]
+    values = {str(row[0].value): row[1] for row in meta.iter_rows() if row and row[0].value}
+    values["schema_version"].value = "999"
+    values["project_id"].value = "other-project"
+    output = io.BytesIO()
+    workbook.save(output)
+
+    spec, parse_issues = parse_workbook(output.getvalue(), settings)
+    codes = {item.code for item in parse_issues + validate_spec(spec, project_payload())}
+    assert "SCHEMA_VERSION_UNSUPPORTED" in codes
+    assert "META_PROJECT_ID_MISMATCH" in codes
+
+
 def test_validation_rules_cover_core_engineering_failures(tmp_path) -> None:
     settings = Settings(data_dir=tmp_path)
     spec, _ = parse_workbook(generate_workbook(project_payload(), kind="example"), settings)
@@ -59,6 +78,55 @@ def test_validation_rules_cover_core_engineering_failures(tmp_path) -> None:
         "NEXT_STEP_MISSING",
         "UNREACHABLE_STEP",
     } <= codes
+
+
+def test_validation_rejects_missing_required_fields_and_broken_engineering_links(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    spec, _ = parse_workbook(generate_workbook(project_payload(), kind="example"), settings)
+    spec["components"][0]["display_name"] = None
+    spec["signals"][0]["address"] = None
+    spec["sequence"][0]["completion_condition"] = None
+    spec["interlocks"][0]["action_id"] = "UNKNOWN_OUTPUT"
+    spec["exceptions"][0]["response"] = None
+    spec["exceptions"][0]["timeout_unit"] = None
+    codes = {item.code for item in validate_spec(spec, project_payload())}
+    assert {
+        "REQUIRED_FIELD_MISSING",
+        "IO_ADDRESS_REQUIRED",
+        "INTERLOCK_ACTION_MISSING",
+        "UNIT_REQUIRED",
+    } <= codes
+
+
+def test_validation_gates_action_generation_and_exception_boundary(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    spec, _ = parse_workbook(generate_workbook(project_payload(), kind="example"), settings)
+    spec["sequence"][1]["actions"] = "SIG_TRAY_PRESENT := FALSE"
+    issues = validate_spec(spec, project_payload())
+    codes = {item.code for item in issues}
+    assert "ACTION_TARGET_DIRECTION_INVALID" in codes
+    assert "ACTION_NOT_DETERMINISTIC" in codes
+    assert "EXCEPTION_VENDOR_LOGIC_REQUIRED" in codes
+
+
+def test_validation_rejects_empty_required_data_sections(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    spec, _ = parse_workbook(generate_workbook(project_payload(), kind="example"), settings)
+    spec["components"] = []
+    spec["signals"] = []
+    spec["sequence"] = []
+    issues = validate_spec(spec, project_payload())
+    assert sum(item.code == "REQUIRED_DATA_EMPTY" for item in issues) == 3
+
+
+def test_validation_rejects_expression_injection(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    spec, _ = parse_workbook(generate_workbook(project_payload(), kind="example"), settings)
+    spec["sequence"][0]["completion_condition"] = "TRUE; DOWNLOAD()"
+    spec["interlocks"][0]["allow_condition"] = "TRUE\nEND_IF"
+    spec["exceptions"][0]["condition"] = "TRUE // bypass"
+    issues = validate_spec(spec, project_payload())
+    assert sum(item.code == "EXPRESSION_SYNTAX_UNSUPPORTED" for item in issues) == 3
 
 
 def test_validation_uses_case_insensitive_iec_identifiers(tmp_path) -> None:
@@ -177,6 +245,61 @@ def test_project_import_revision_and_concurrency(
     )
     assert conflict.status_code == 409
     assert imported_example["artifact"]["sha256"] == original_artifact
+
+
+def test_project_patch_and_etag_validation(client: TestClient, project: dict) -> None:
+    updated = client.patch(
+        f"/api/v1/projects/{project['id']}",
+        json={"name": "FX5U 更新项目", "expected_revision": project["revision"]},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["name"] == "FX5U 更新项目"
+
+    missing = client.patch(
+        f"/api/v1/projects/{project['id']}", json={"name": "缺少并发标记"}
+    )
+    assert missing.status_code == 428
+    assert missing.json()["code"] == "PRECONDITION_REQUIRED"
+
+    malformed = client.patch(
+        f"/api/v1/projects/{project['id']}",
+        headers={"If-Match": "not-a-revision"},
+        json={"name": "非法并发标记"},
+    )
+    assert malformed.status_code == 400
+    assert malformed.json()["code"] == "INVALID_ETAG"
+
+
+def test_project_revision_is_atomic_at_database_commit(
+    client: TestClient, project: dict
+) -> None:
+    database = client.app.state.database
+    with database.session_factory() as first, database.session_factory() as second:
+        first_project = first.get(Project, project["id"])
+        second_project = second.get(Project, project["id"])
+        assert first_project is not None and second_project is not None
+        first_project.name = "first writer"
+        first_project.revision += 1
+        second_project.name = "stale writer"
+        second_project.revision += 1
+        first.commit()
+        with pytest.raises(StaleDataError):
+            second.commit()
+
+
+def test_project_archive_requires_current_revision(client: TestClient, project: dict) -> None:
+    missing = client.post(f"/api/v1/projects/{project['id']}/archive")
+    assert missing.status_code == 428
+    archived = client.post(
+        f"/api/v1/projects/{project['id']}/archive",
+        headers={"If-Match": str(project["revision"])},
+    )
+    assert archived.status_code == 200, archived.text
+    stale_restore = client.post(
+        f"/api/v1/projects/{project['id']}/restore",
+        headers={"If-Match": str(project["revision"])},
+    )
+    assert stale_restore.status_code == 409
 
 
 def test_validation_report_is_bound_deterministic_and_read_only(

@@ -8,7 +8,7 @@ from typing import Any
 
 from .plc_profiles import profile_for_target
 
-GENERATOR_VERSION = "kongpu-st-v4"
+GENERATOR_VERSION = "kongpu-st-v5"
 
 
 def stable_json(value: Any) -> str:
@@ -33,13 +33,47 @@ def _st_type(data_type: str) -> str:
     return normalized if normalized in allowed else "BOOL"
 
 
+def _st_comment(value: Any) -> str:
+    return " ".join(str(value or "").replace("//", "/ /").splitlines()).strip()
+
+
 def _translate_expression(expression: str | None, signals: dict[str, str]) -> str:
     if not expression:
         return "TRUE"
     result = str(expression)
+    if (
+        not re.fullmatch(r"[A-Za-z0-9_\- \t.()+*/<>=]+", result)
+        or any(token in result for token in ("//", "/*", "*/", "(*", "*)"))
+    ):
+        raise ValueError("表达式包含首版受限 ST 子集之外的字符")
     for signal_id in sorted(signals, key=len, reverse=True):
         result = re.sub(rf"\b{re.escape(signal_id)}\b", signals[signal_id], result, flags=re.IGNORECASE)
     return result.replace(":=", "=")
+
+
+def _parse_action_assignments(
+    actions: str | None, signals: dict[str, str]
+) -> tuple[list[dict[str, str]], list[str]]:
+    assignments: list[dict[str, str]] = []
+    unsupported: list[str] = []
+    by_folded_id = {identifier.casefold(): name for identifier, name in signals.items()}
+    for raw_statement in re.split(r"[;\r\n]+", str(actions or "")):
+        statement = raw_statement.strip()
+        if not statement:
+            continue
+        match = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]*)\s*:=\s*(.+)", statement)
+        target = by_folded_id.get(match.group(1).casefold()) if match else None
+        if match and target:
+            assignments.append(
+                {
+                    "target_id": match.group(1),
+                    "target": target,
+                    "expression": _translate_expression(match.group(2).strip(), signals),
+                }
+            )
+        else:
+            unsupported.append(statement)
+    return assignments, unsupported
 
 
 def _satisfying_inputs(expression: str | None) -> dict[str, bool | int | float]:
@@ -97,13 +131,18 @@ def build_control_ir(spec: dict[str, Any]) -> dict[str, Any]:
     signal_names = {item["id"]: item["name"] for item in signals}
     steps = []
     for index, item in enumerate(spec.get("sequence", []), start=1):
+        action_assignments, unsupported_actions = _parse_action_assignments(
+            item.get("actions"), signal_names
+        )
         steps.append(
             {
                 "id": item["step_id"],
                 "number": index * 10,
                 "display_name": item.get("display_name") or item["step_id"],
                 "entry_condition": _translate_expression(item.get("entry_condition"), signal_names),
-                "actions": _translate_expression(item.get("actions"), signal_names),
+                "actions": str(item.get("actions") or ""),
+                "action_assignments": action_assignments,
+                "unsupported_actions": unsupported_actions,
                 "completion_condition": _translate_expression(item.get("completion_condition"), signal_names),
                 "next_step_id": item.get("next_step_id"),
                 "duration": item.get("expected_duration"),
@@ -124,6 +163,17 @@ def build_control_ir(spec: dict[str, Any]) -> dict[str, Any]:
             "hardware_verified": False,
         }
     )
+    external_state_ids: set[str] = set()
+    known_signal_ids = {identifier.casefold() for identifier in signal_names}
+    for interlock in spec.get("interlocks", []):
+        for key in ("allow_condition", "inhibit_condition"):
+            for token in re.findall(r"\b[A-Za-z][A-Za-z0-9_]*\b", str(interlock.get(key) or "")):
+                if token.casefold() not in known_signal_ids and token.upper() not in {"TRUE", "FALSE", "AND", "OR", "NOT"}:
+                    external_state_ids.add(token)
+    external_states = [
+        {"id": identifier, "name": f"KP_EXT_{_st_name(identifier)}", "verification_level": "unverified"}
+        for identifier in sorted(external_state_ids, key=str.casefold)
+    ]
     return {
         "ir_version": "1.0",
         "generator_version": GENERATOR_VERSION,
@@ -131,6 +181,7 @@ def build_control_ir(spec: dict[str, Any]) -> dict[str, Any]:
         "project": spec.get("project", {}),
         "components": sorted(spec.get("components", []), key=lambda row: row.get("component_id", "")),
         "signals": signals,
+        "external_states": external_states,
         "steps": steps,
         "interlocks": sorted(spec.get("interlocks", []), key=lambda row: row.get("interlock_id", "")),
         "exceptions": sorted(spec.get("exceptions", []), key=lambda row: row.get("exception_id", "")),
@@ -148,7 +199,7 @@ def _render_gvl(ir: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     for signal in ir["signals"]:
         address = f" AT %{signal['address']}" if signal.get("address") and profile.direct_address_binding else ""
         logical_address = f" | logical address {signal['address']}" if signal.get("address") and not profile.direct_address_binding else ""
-        lines.append(f"    {signal['name']}{address} : {signal['data_type']}; // {signal['display_name']}{logical_address}")
+        lines.append(f"    {signal['name']}{address} : {signal['data_type']}; // {_st_comment(signal['display_name'])}{logical_address}")
         traces.append(
             {
                 "output_path": "src/GVL_IO.st",
@@ -160,7 +211,17 @@ def _render_gvl(ir: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
                 "source_row": (signal.get("source") or {}).get("row"),
             }
         )
-    lines.extend(["    KP_ModeAuto : BOOL;", "    KP_CurrentStep : INT := 10;", "END_VAR", ""])
+    for state in ir.get("external_states", []):
+        lines.append(f"    {state['name']} : BOOL; // External read-only state; mapping unverified")
+    first_step = ir["steps"][0]["number"] if ir["steps"] else 0
+    lines.extend([
+        "    KP_ModeAuto : BOOL;",
+        "    KP_Reset : BOOL;",
+        "    KP_Fault : BOOL;",
+        f"    KP_CurrentStep : INT := {first_step};",
+        "END_VAR",
+        "",
+    ])
     return "\n".join(lines), traces
 
 
@@ -170,20 +231,61 @@ def _render_program(ir: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
         "PROGRAM PRG_AutoCycle",
         f"// Deterministic Structured Text skeleton for profile {profile.profile_id}.",
         "// Safety functions, PLC download, RUN/STOP and forced output are intentionally absent.",
-        "CASE KP_CurrentStep OF",
     ]
+    signals_by_id = {
+        str(signal.get("id") or "").casefold(): signal for signal in ir.get("signals", [])
+    }
+    interlocks_by_action: dict[str, list[dict[str, Any]]] = {}
+    for interlock in ir.get("interlocks", []):
+        interlocks_by_action.setdefault(
+            str(interlock.get("action_id") or "").casefold(), []
+        ).append(interlock)
+    action_targets = {
+        assignment["target"]
+        for step in ir.get("steps", [])
+        for assignment in step.get("action_assignments", [])
+        if str(signals_by_id.get(str(assignment.get("target_id") or "").casefold(), {}).get("data_type") or "").upper() == "BOOL"
+    }
+    lines.extend(f"{target} := FALSE;" for target in sorted(action_targets))
+    first_step = ir["steps"][0]["number"] if ir["steps"] else 0
+    lines.extend([
+        "IF KP_Reset THEN",
+        f"    KP_CurrentStep := {first_step};",
+        "    KP_Fault := FALSE;",
+        "ELSIF KP_ModeAuto AND NOT KP_Fault THEN",
+        "    CASE KP_CurrentStep OF",
+    ])
     traces: list[dict[str, Any]] = []
     for step in ir["steps"]:
-        lines.append(f"    {step['number']}: // {step['id']} - {step['display_name']}")
+        lines.append(f"        {step['number']}: // {_st_comment(step['id'])} - {_st_comment(step['display_name'])}")
         trace_line = len(lines)
-        lines.append(f"        // Entry: {step['entry_condition']}")
-        lines.append(f"        // Actions: {step['actions']}")
-        lines.append(f"        IF {step['completion_condition']} THEN")
+        lines.append(f"            IF {step['entry_condition']} THEN")
+        for assignment in step.get("action_assignments", []):
+            conditions: list[str] = []
+            expression_symbols = {
+                **{item["id"]: item["name"] for item in ir["signals"]},
+                **{item["id"]: item["name"] for item in ir.get("external_states", [])},
+            }
+            for interlock in interlocks_by_action.get(str(assignment["target_id"]).casefold(), []):
+                allow = _translate_expression(interlock.get("allow_condition"), expression_symbols)
+                conditions.append(f"({allow})")
+                if interlock.get("inhibit_condition"):
+                    inhibit = _translate_expression(interlock.get("inhibit_condition"), expression_symbols)
+                    conditions.append(f"NOT ({inhibit})")
+            if conditions:
+                lines.append(f"                IF {' AND '.join(conditions)} THEN")
+                lines.append(f"                    {assignment['target']} := {assignment['expression']};")
+                lines.append("                END_IF;")
+            else:
+                lines.append(f"                {assignment['target']} := {assignment['expression']};")
+        for unsupported in step.get("unsupported_actions", []):
+            lines.append(f"                // TODO ACTION_NOT_GENERATED: {_st_comment(unsupported)}")
+        lines.append(f"                IF {step['completion_condition']} THEN")
         if step["next_step_number"]:
-            lines.append(f"            KP_CurrentStep := {step['next_step_number']};")
+            lines.append(f"                    KP_CurrentStep := {step['next_step_number']};")
         else:
-            lines.append("            KP_CurrentStep := 0; // END")
-        lines.extend(["        END_IF;", ""])
+            lines.append("                    KP_CurrentStep := 0; // END")
+        lines.extend(["                END_IF;", "            END_IF;", ""])
         source = step.get("source") or {}
         traces.append(
             {
@@ -196,7 +298,7 @@ def _render_program(ir: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
                 "source_row": source.get("row"),
             }
         )
-    lines.extend(["END_CASE;", "END_PROGRAM", ""])
+    lines.extend(["    END_CASE;", "END_IF;", "END_PROGRAM", ""])
     return "\n".join(lines), traces
 
 
@@ -246,7 +348,21 @@ def generate_bundle(spec: dict[str, Any]) -> GeneratedBundle:
     program, step_traces = _render_program(ir)
     test_spec = _build_test_spec(ir)
     warnings = []
+    for step in ir["steps"]:
+        for action in step.get("unsupported_actions", []):
+            warnings.append(
+                {
+                    "code": "ACTION_NOT_GENERATED",
+                    "message": f"{step['id']} 的动作“{action}”不能确定性转换为 ST，已保留 TODO。",
+                }
+            )
     for exception in ir["exceptions"]:
+        warnings.append(
+            {
+                "code": "EXCEPTION_VENDOR_LOGIC_REQUIRED",
+                "message": f"{exception['exception_id']} 仅进入 Control IR/TestSpec；厂商 ST 计时、报警和复位逻辑尚未生成。",
+            }
+        )
         if not exception.get("operator_message"):
             warnings.append(
                 {

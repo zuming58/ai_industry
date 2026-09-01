@@ -85,11 +85,11 @@ export const api = {
       body: { name: payload.name, customer_code: payload.customer_code, plc_brand: payload.plc_brand, plc_series: payload.plc_series, plc_model: payload.plc_model, expected_revision: project.revision },
     }));
   },
-  async archive(id: string): Promise<Project> {
-    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/archive", { params: { path: { project_id: id } } }));
+  async archive(project: Project): Promise<Project> {
+    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/archive", { params: { path: { project_id: project.id } }, headers: { "If-Match": String(project.revision) } }));
   },
-  async restore(id: string): Promise<Project> {
-    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/restore", { params: { path: { project_id: id } } }));
+  async restore(project: Project): Promise<Project> {
+    return ensure(await apiClient.POST("/api/v1/projects/{project_id}/restore", { params: { path: { project_id: project.id } }, headers: { "If-Match": String(project.revision) } }));
   },
   async currentTemplate(): Promise<Record<string, unknown>> {
     return ensure(await apiClient.GET("/api/v1/template-versions/current"));

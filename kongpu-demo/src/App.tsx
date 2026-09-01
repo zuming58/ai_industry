@@ -6,7 +6,7 @@ import {
   GitBranch, HardDrives, Info, ListChecks, MagnifyingGlass, PencilSimple,
   Plus, Pulse, SquaresFour, UploadSimple, WarningCircle, X,
 } from "@phosphor-icons/react";
-import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, saveBlob } from "./api/client";
 import type {
   AdapterDescriptor, AdapterEnvironment, AutomatedReviewRun, CompileRun, GenerationRun,
@@ -77,6 +77,11 @@ function EmptyState({ title, text, action }: { title: string; text: string; acti
   return <div className="real-empty"><Info size={28} weight="duotone" /><strong>{title}</strong><span>{text}</span>{action}</div>;
 }
 
+function QueryErrorState({ queries }: { queries: Array<{ isError: boolean; error: unknown }> }) {
+  const failed = queries.find((query) => query.isError);
+  return failed ? <EmptyState title="页面数据读取失败" text={errorMessage(failed.error)} /> : null;
+}
+
 function Status({ value }: { value: string }) {
   const tone = value.includes("锁定") || value.includes("review_ready") || value.includes("clean") ? "green" : value.includes("失败") || value.includes("blocked") ? "violet" : "blue";
   return <span className={"status status--" + tone}>{value}</span>;
@@ -135,8 +140,8 @@ function ProjectTable({ projects, onOpen, actions }: { projects: Project[]; onOp
 function ProjectsPage() {
   const queryClient = useQueryClient(); const navigate = useNavigate(); const [showArchived, setShowArchived] = useState(false); const projects = useProjects(true); const [modal, setModal] = useState<Project | "new" | null>(null);
   const visible = (projects.data || []).filter((item) => showArchived || !item.archived);
-  const archiveMutation = useMutation({ mutationFn: (project: Project) => project.archived ? api.restore(project.id) : api.archive(project.id), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["projects"] }); notify("项目状态已更新"); }, onError: notifyError });
-  return <main className="hub-page"><PageHeading kicker="P02 · PROJECTS" title="项目管理" description="创建、编辑、归档与恢复真实项目，刷新页面后数据仍保留。" actions={<><label className="toggle-label"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />显示归档</label><button className="button button--primary" onClick={() => setModal("new")}><Plus size={16} />新建项目</button></>} /><ProjectTable projects={visible} onOpen={(project) => navigate("/projects/" + project.id + "/templates")} actions={(project) => <><button onClick={() => setModal(project)}><PencilSimple size={14} />编辑</button><button onClick={() => archiveMutation.mutate(project)}>{project.archived ? "恢复" : "归档"}</button></>} />{modal && <ProjectModal project={modal === "new" ? undefined : modal} onClose={() => setModal(null)} onSaved={() => { setModal(null); queryClient.invalidateQueries({ queryKey: ["projects"] }); }} />}</main>;
+  const archiveMutation = useMutation({ mutationFn: (project: Project) => project.archived ? api.restore(project) : api.archive(project), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["projects"] }); notify("项目状态已更新"); }, onError: notifyError });
+  return <main className="hub-page"><PageHeading kicker="P02 · PROJECTS" title="项目管理" description="创建、编辑、归档与恢复真实项目，刷新页面后数据仍保留。" actions={<><label className="toggle-label"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />显示归档</label><button className="button button--primary" onClick={() => setModal("new")}><Plus size={16} />新建项目</button></>} />{projects.isLoading ? <EmptyState title="正在读取项目" text="连接本机 API…" /> : projects.isError ? <EmptyState title="项目列表读取失败" text={errorMessage(projects.error)} /> : <ProjectTable projects={visible} onOpen={(project) => navigate("/projects/" + project.id + "/templates")} actions={(project) => <><button onClick={() => setModal(project)}><PencilSimple size={14} />编辑</button><button onClick={() => archiveMutation.mutate(project)}>{project.archived ? "恢复" : "归档"}</button></>} />}{modal && <ProjectModal project={modal === "new" ? undefined : modal} onClose={() => setModal(null)} onSaved={() => { setModal(null); queryClient.invalidateQueries({ queryKey: ["projects"] }); }} />}</main>;
 }
 
 function ProjectModal({ project, onClose, onSaved }: { project?: Project; onClose: () => void; onSaved: () => void }) {
@@ -176,11 +181,13 @@ function WorkflowNav({ projectId }: { projectId: string }) {
 
 function ProjectPage({ children, kicker, title, description, actions }: { children: ReactNode; kicker: string; title: string; description: string; actions?: ReactNode }) {
   const { projectId, project } = useProjectContext();
-  return <main className="engineering-page"><PageHeading kicker={kicker} title={project.data ? title + " · " + project.data.name : title} description={description} actions={actions} /><WorkflowNav projectId={projectId} />{project.isError ? <EmptyState title="项目读取失败" text={errorMessage(project.error)} /> : children}</main>;
+  return <main className="engineering-page"><PageHeading kicker={kicker} title={project.data ? title + " · " + project.data.name : title} description={description} actions={actions} /><WorkflowNav projectId={projectId} />{project.isLoading ? <EmptyState title="正在读取项目" text="连接本机 API…" /> : project.isError ? <EmptyState title="项目读取失败" text={errorMessage(project.error)} /> : children}</main>;
 }
 
 function TemplatePage() {
   const { projectId, project } = useProjectContext(); const template = useQuery({ queryKey: ["template-current"], queryFn: api.currentTemplate }); const [downloading, setDownloading] = useState<string | null>(null);
+  if (template.isLoading) return <ProjectPage kicker="P03 · TEMPLATE" title="MachineSpec 模板" description="下载与项目 PLC 目标绑定的 Excel v1 模板。"><EmptyState title="正在读取模板版本" text="连接本机 API…" /></ProjectPage>;
+  if (template.isError) return <ProjectPage kicker="P03 · TEMPLATE" title="MachineSpec 模板" description="下载与项目 PLC 目标绑定的 Excel v1 模板。"><QueryErrorState queries={[template]} /></ProjectPage>;
   const download = async (kind: "blank" | "example") => { if (!project.data) return; setDownloading(kind); try { const blob = await api.downloadTemplate(projectId, kind); saveBlob(blob, project.data.code + "_MachineSpec_v1_" + kind + ".xlsx"); notify(kind === "blank" ? "空白模板已下载" : "完整范例已下载"); } catch (error) { notifyError(error); } finally { setDownloading(null); } };
   const target = project.data ? `${project.data.plc_brand} ${project.data.plc_model}` : "当前 PLC";
   const vendorTool = project.data?.plc_series === "H5U" ? "AutoShop" : "GX Works3";
@@ -205,18 +212,25 @@ function ImportPage() {
 function SeverityIcon({ issue }: { issue: ValidationIssue }) { return issue.severity === "blocker" ? <WarningCircle size={18} weight="fill" color="#d34d55" /> : issue.severity === "warning" ? <WarningCircle size={18} weight="fill" color="#d49325" /> : <Info size={18} color="#3578b9" />; }
 
 function SpecTable({ spec }: { spec: MachineSpec }) {
-  const [sheet, setSheet] = useState<"components" | "signals" | "sequence">("signals"); const rows = spec[sheet] as Array<Record<string, unknown>>;
+  type SheetKey = "components" | "signals" | "sequence" | "interlocks" | "exceptions";
+  const [searchParams] = useSearchParams();
+  const sourceSheet = (searchParams.get("sheet") || "").toLowerCase() as SheetKey;
+  const sourceRow = Number(searchParams.get("row") || 0);
+  const [sheet, setSheet] = useState<SheetKey>(sourceSheet in spec ? sourceSheet : "signals");
+  useEffect(() => { if (sourceSheet in spec) setSheet(sourceSheet); }, [sourceSheet, spec]);
+  const rows = spec[sheet] as Array<Record<string, unknown>>;
   const columns = useMemo(() => rows.length ? Object.keys(rows[0]).filter((item) => item !== "source").slice(0, 6) : [], [rows]);
-  return <section className="panel spec-table"><div className="panel__header"><div><h3>结构化工作表</h3><p>每行保留源 Excel 定位</p></div><select value={sheet} onChange={(event) => setSheet(event.target.value as typeof sheet)}><option value="components">Components</option><option value="signals">Signals</option><option value="sequence">Sequence</option></select></div><div className="table-scroll"><table><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={String(row[columns[0]] || index)}>{columns.map((column) => <td key={column}>{String(row[column] ?? "")}</td>)}</tr>)}</tbody></table></div></section>;
+  return <section className="panel spec-table"><div className="panel__header"><div><h3>结构化工作表</h3><p>{sourceRow ? `已定位源 Excel 第 ${sourceRow} 行` : "每行保留源 Excel 定位"}</p></div><select value={sheet} onChange={(event) => setSheet(event.target.value as SheetKey)}><option value="components">Components</option><option value="signals">Signals</option><option value="sequence">Sequence</option><option value="interlocks">Interlocks</option><option value="exceptions">Exceptions</option></select></div><div className="table-scroll"><table><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}<th>Excel 来源</th></tr></thead><tbody>{rows.map((row, index) => { const source = row.source as { sheet?: string; row?: number } | undefined; const highlighted = sourceRow > 0 && source?.row === sourceRow && source?.sheet?.toLowerCase() === sheet; return <tr className={highlighted ? "source-row" : ""} key={String(row[columns[0]] || index)}>{columns.map((column) => <td key={column}>{String(row[column] ?? "")}</td>)}<td>{source?.sheet || "-"} · 第 {source?.row || "-"} 行</td></tr>; })}</tbody></table></div></section>;
 }
 
 function ReviewPage() {
   const queryClient = useQueryClient(); const { projectId, project } = useProjectContext(); const revision = useQuery({ queryKey: ["revision", project.data?.current_spec_revision_id], queryFn: () => api.getRevision(project.data!.current_spec_revision_id!), enabled: Boolean(project.data?.current_spec_revision_id) }); const [activeView, setActiveView] = useState("device_relationship"); const spec = revision.data;
   useEffect(() => { if (spec && !spec.required_views.includes(activeView)) setActiveView(spec.required_views[0]); }, [spec?.id]);
   const refresh = () => { queryClient.invalidateQueries({ queryKey: ["revision"] }); queryClient.invalidateQueries({ queryKey: ["project", projectId] }); };
-  const accept = async (issue: ValidationIssue) => { if (!spec) return; const reason = window.prompt("填写接受该 warning 的工程理由：", "工程师已复核，风险可接受"); if (!reason) return; try { await api.acceptWarning(spec, issue.id, reason); refresh(); notify("Warning 已接受并写入审计记录"); } catch (error) { notifyError(error); } };
-  const confirm = async () => { if (!spec) return; try { await api.confirmView(spec, activeView); refresh(); notify(viewLabels[activeView] + "已确认"); } catch (error) { notifyError(error); } };
-  const lock = async () => { if (!spec) return; try { await api.lockSpec(spec); refresh(); notify("MachineSpec 已生成不可变锁定快照"); } catch (error) { notifyError(error); } };
+  const applyRevision = (updated: SpecRevision) => { queryClient.setQueryData(["revision", spec?.id], updated); refresh(); };
+  const accept = async (issue: ValidationIssue) => { if (!spec) return; const reason = window.prompt("填写处理该 warning 的理由（不会升级厂商、硬件或电气验证等级）：", "已知该项未自动完成，纳入集中外部验证"); if (!reason) return; try { applyRevision(await api.acceptWarning(spec, issue.id, reason)); notify("Warning 处理理由已写入审计记录；外部验证等级未改变"); } catch (error) { notifyError(error); } };
+  const confirm = async () => { if (!spec) return; try { applyRevision(await api.confirmView(spec, activeView)); notify(viewLabels[activeView] + "已确认"); } catch (error) { notifyError(error); } };
+  const lock = async () => { if (!spec) return; try { const result = await api.lockSpec(spec); applyRevision(result.revision); notify("MachineSpec 已生成不可变锁定快照"); } catch (error) { notifyError(error); } };
   return <ProjectPage kicker="P05 · REVIEW" title="MachineSpec 多视图审阅" description="所有对象可追溯到 Excel 来源；数据修改会使旧确认失效。">
     {!project.data?.current_spec_revision_id ? <EmptyState title="没有可审阅的规格" text="请先在 P04 上传并校验 Excel。" /> : revision.isLoading ? <EmptyState title="正在生成审阅视图" text="请稍候…" /> : spec ? <><div className="review-toolbar"><Status value={spec.status} /><span>Revision {spec.sequence}</span><span>{spec.content_hash.slice(0, 12)}</span><button className="button button--primary" disabled={spec.status === "locked"} onClick={lock}><CheckCircle size={16} />锁定规格</button></div><div className="tab-strip">{spec.required_views.map((view) => { const confirmed = spec.confirmations.some((item) => item.view === view); return <button key={view} className={activeView === view ? "is-active" : ""} onClick={() => setActiveView(view)}>{confirmed && <CheckCircle size={14} weight="fill" />}{viewLabels[view] || view}</button>; })}</div><div className="review-layout"><section className="panel review-canvas"><ReviewView view={activeView} spec={spec} /></section><aside className="panel review-summary"><div className="panel__header"><div><h3>锁定门禁</h3><p>确定性规则与工程确认</p></div></div><Gate label="Blocker" value={spec.issues.filter((item) => item.severity === "blocker" && !item.resolved).length} /><Gate label="未接受 Warning" value={spec.issues.filter((item) => item.severity === "warning" && !item.resolved).length} /><Gate label="未确认视图" value={spec.required_views.filter((view) => !spec.confirmations.some((item) => item.view === view)).length} />{spec.issues.filter((item) => item.severity === "warning" && !item.resolved).map((issue) => <button key={issue.id} className="warning-action" onClick={() => accept(issue)}><WarningCircle size={15} />接受：{issue.title}</button>)}<button className="button button--outline" disabled={spec.confirmations.some((item) => item.view === activeView) || spec.status === "locked"} onClick={confirm}><Check size={15} />确认当前视图</button></aside></div></> : <EmptyState title="规格读取失败" text={errorMessage(revision.error)} />}
   </ProjectPage>;
@@ -226,12 +240,14 @@ function Gate({ label, value }: { label: string; value: number }) { return <div 
 
 function ReviewView({ view, spec }: { view: string; spec: SpecRevision }) {
   const data = spec.data;
-  if (view === "device_relationship") return <div className="device-tree"><strong>{String(data.project.project_name || "项目")}</strong><div>{data.components.map((item) => <button key={String(item.component_id)} title={"来源 " + String((item.source as Record<string, unknown>)?.sheet || "Components") + " 第 " + String((item.source as Record<string, unknown>)?.row || "-") + " 行"}>{String(item.display_name || item.component_id)}</button>)}</div></div>;
-  if (view === "process_flow") return <div className="process-flow">{data.sequence.map((item, index) => <button key={String(item.step_id)}><span>{index + 1}</span><strong>{String(item.display_name || item.step_id)}</strong><small>{String(item.completion_condition || "")}</small></button>)}</div>;
-  if (view === "io_mapping" || view === "signal_timing") return <div className={view === "signal_timing" ? "timing-chart" : "matrix-view"}>{data.signals.map((item) => <div key={String(item.signal_id)}><strong>{String(item.signal_id)}</strong><span>{String(item.direction)} · {String(item.address || "内部")}</span>{view === "signal_timing" ? <i /> : <span>{String(item.data_type)}</span>}</div>)}</div>;
-  if (view === "interlock_matrix") return <div className="matrix-view">{data.interlocks.map((item) => <div key={String(item.interlock_id)}><strong>{String(item.interlock_id)}</strong><span>{String(item.action_id)}</span><span>{String(item.allow_condition)}</span></div>)}</div>;
-  if (view === "exceptions") return <div className="matrix-view">{data.exceptions.map((item) => <div key={String(item.exception_id)}><strong>{String(item.exception_id)}</strong><span>{String(item.condition)}</span><span>{String(item.response)}</span></div>)}</div>;
-  if (view === "cycle_analysis") return <div className="cycle-grid">{data.sequence.map((item) => <div key={String(item.step_id)}><strong>{String(item.display_name)}</strong><span>{String(item.expected_duration || "-")} {String(item.duration_unit || "")}</span></div>)}</div>;
+  const navigate = useNavigate();
+  const openSource = (source: unknown) => { const value = source as { sheet?: string; row?: number } | undefined; if (value?.sheet && value.row) navigate(`/projects/${spec.project_id}/imports?sheet=${encodeURIComponent(value.sheet)}&row=${value.row}`); };
+  if (view === "device_relationship") return <div className="device-tree"><strong>{String(data.project.project_name || "项目")}</strong><div>{data.components.map((item) => <button key={String(item.component_id)} onClick={() => openSource(item.source)} title="返回源 Excel 行">{String(item.display_name || item.component_id)}</button>)}</div></div>;
+  if (view === "process_flow") return <div className="process-flow">{data.sequence.map((item, index) => <button key={String(item.step_id)} onClick={() => openSource(item.source)} title="返回源 Excel 行"><span>{index + 1}</span><strong>{String(item.display_name || item.step_id)}</strong><small>{String(item.completion_condition || "")}</small></button>)}</div>;
+  if (view === "io_mapping" || view === "signal_timing") return <div className={view === "signal_timing" ? "timing-chart" : "matrix-view"}>{data.signals.map((item) => <button type="button" onClick={() => openSource(item.source)} key={String(item.signal_id)}><strong>{String(item.signal_id)}</strong><span>{String(item.direction)} · {String(item.address || "内部")}</span>{view === "signal_timing" ? <i /> : <span>{String(item.data_type)}</span>}</button>)}</div>;
+  if (view === "interlock_matrix") return <div className="matrix-view">{data.interlocks.map((item) => <button type="button" onClick={() => openSource(item.source)} key={String(item.interlock_id)}><strong>{String(item.interlock_id)}</strong><span>{String(item.action_id)}</span><span>{String(item.allow_condition)}</span></button>)}</div>;
+  if (view === "exceptions") return <div className="matrix-view">{data.exceptions.map((item) => <button type="button" onClick={() => openSource(item.source)} key={String(item.exception_id)}><strong>{String(item.exception_id)}</strong><span>{String(item.condition)}</span><span>{String(item.response)}</span></button>)}</div>;
+  if (view === "cycle_analysis") return <div className="cycle-grid">{data.sequence.map((item) => <button type="button" onClick={() => openSource(item.source)} key={String(item.step_id)}><strong>{String(item.display_name)}</strong><span>{String(item.expected_duration || "-")} {String(item.duration_unit || "")}</span></button>)}</div>;
   return <SpecTable spec={data} />;
 }
 
@@ -239,6 +255,7 @@ function ProgramPage() {
   const queryClient = useQueryClient(); const { projectId, project } = useProjectContext(); const branches = useQuery({ queryKey: ["branches", projectId], queryFn: () => api.listBranches(projectId) }); const runs = useQuery({ queryKey: ["runs", projectId], queryFn: () => api.listRuns(projectId) }); const [branchId, setBranchId] = useState(""); const activeId = branchId || branches.data?.[0]?.id || ""; const files = useQuery({ queryKey: ["files", activeId], queryFn: () => api.listFiles(activeId), enabled: Boolean(activeId) }); const [path, setPath] = useState(""); const defaultEditablePath = files.data?.files.find((item) => item.path === "src/PRG_AutoCycle.st")?.path || files.data?.files.find((item) => item.path.startsWith("src/") && item.path.endsWith(".st"))?.path || files.data?.files[0]?.path || ""; const selectedPath = path || defaultEditablePath; const immutablePath = selectedPath === "generated/ControlIR.json" || selectedPath === "tests/TestSpec.json"; const file = useQuery({ queryKey: ["file", activeId, selectedPath], queryFn: () => api.getFile(activeId, selectedPath), enabled: Boolean(activeId && selectedPath) }); const fileKey = activeId && selectedPath ? `${activeId}:${selectedPath}` : ""; const [editor, setEditor] = useState({ key: "", content: "" }); const [message, setMessage] = useState("Review generated program");
   useEffect(() => { if (file.data?.path === selectedPath) setEditor({ key: fileKey, content: file.data.content }); }, [file.data?.content, file.data?.path, fileKey, selectedPath]);
   const editorReady = Boolean(fileKey && editor.key === fileKey && file.data?.path === selectedPath && file.data.branch_revision === files.data?.branch.revision);
+  if ([branches, runs, files, file].some((query) => query.isError)) return <ProjectPage kicker="P06 · PROGRAM" title="程序工作区" description={`从已锁定规格生成确定性 ${project.data?.plc_brand || "PLC"} ST；不声明通过厂商 IDE 编译。`}><QueryErrorState queries={[branches, runs, files, file]} /></ProjectPage>;
   const generate = async () => { const specId = project.data?.current_spec_revision_id; if (!specId) return notifyError(new Error("没有已锁定 MachineSpec")); try { await api.generate(projectId, specId, "generated/spec-" + Date.now()); queryClient.invalidateQueries({ queryKey: ["branches", projectId] }); queryClient.invalidateQueries({ queryKey: ["runs", projectId] }); notify("已生成确定性 ST 骨架和 TestSpec；厂商编译未验证"); } catch (error) { notifyError(error); } };
   const save = async () => { if (!files.data?.branch || !selectedPath || immutablePath) return; if (!editorReady || file.data?.path !== selectedPath) return notifyError(new Error("当前文件尚未完整加载，请稍后再保存")); try { const result = await api.saveFile(activeId, selectedPath, editor.content, files.data.branch.revision); await queryClient.invalidateQueries({ queryKey: ["files", activeId] }); queryClient.setQueryData(["file", activeId, selectedPath], { path: selectedPath, content: editor.content, branch_revision: result.branch.revision }); notify("文件已保存到工作分支，尚未提交"); } catch (error) { notifyError(error); } };
   const commit = async () => { if (!files.data?.branch) return; try { await api.commit(files.data.branch, message); await Promise.all([queryClient.invalidateQueries({ queryKey: ["files", activeId] }), queryClient.invalidateQueries({ queryKey: ["branches", projectId] }), queryClient.invalidateQueries({ queryKey: ["runs", projectId] }), queryClient.invalidateQueries({ queryKey: ["automated-reviews", projectId] })]); notify("程序修改已提交到本地 Git 历史"); } catch (error) { notifyError(error); } };
@@ -307,6 +324,7 @@ function VersionPage() {
   const sourceBranch = branches.data?.find((item) => item.id === baseCommit?.branch_id);
   const comparison = useQuery({ queryKey: ["commit-comparison", resolvedBaseId, resolvedTargetId], queryFn: () => api.compareCommits(resolvedBaseId, resolvedTargetId), enabled: Boolean(resolvedBaseId && resolvedTargetId) });
   const timeline = useQuery({ queryKey: ["project-timeline", projectId], queryFn: () => api.getProjectTimeline(projectId), enabled: timelineVisible });
+  if ([branches, commits, timeline].some((query) => query.isError)) return <ProjectPage kicker="P11 · VERSION" title="版本中心" description="比较两个明确 Commit，或查看规格到现场证据的统一只读时间线；恢复不改写历史。"><QueryErrorState queries={[branches, commits, timeline]} /></ProjectPage>;
   const restore = async () => {
     if (!baseCommit || !sourceBranch) return;
     setBusy(true);
@@ -370,6 +388,8 @@ function ReleasePage() {
   });
   const persistedAcceptance = acceptances.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === review?.program_commit_id && item.release_candidate_id === candidate?.id) || null;
   const activeAcceptance = acceptance?.generation_run_id === selectedRunId ? acceptance : persistedAcceptance;
+  const releaseQueries = [runs, reviews, simulations, candidates, acceptances, readiness, candidateEvidence];
+  if (releaseQueries.some((query) => query.isError)) return <ProjectPage kicker="P09 · DELIVERY CANDIDATE" title="交付候选包" description="把当前通过自动审核的 Commit、参考模拟与证据打成确定性不可变 ZIP；这不是正式发布或厂商通过。"><QueryErrorState queries={releaseQueries} /></ProjectPage>;
 
   const createCandidate = async () => {
     if (!run) return;
@@ -503,6 +523,8 @@ function MonitoringPage() {
   const candidate = candidates.data?.find((item) => item.id === selectedCandidateId);
   const plan = plans.data?.find((item) => item.release_candidate_id === selectedCandidateId);
   const evidence = useQuery({ queryKey: ["monitoring-evidence", plan?.id], queryFn: () => api.listMonitoringEvidence(plan!.id), enabled: Boolean(plan?.id) });
+  const monitoringQueries = [candidates, plans, evidence];
+  if (monitoringQueries.some((query) => query.isError)) return <ProjectPage kicker="P10 · READ-ONLY MONITORING PREP" title="只读监控准备" description="只整理离线变量快照、等待条件和证据；当前未连接 PLC，不读取实时值，也不支持下载、RUN/STOP 或强制输出。"><QueryErrorState queries={monitoringQueries} /></ProjectPage>;
 
   const createPlan = async () => {
     if (!candidate) return;
@@ -571,6 +593,8 @@ function CompilePage() {
   const expectedAdapter = project.data?.plc_series === "H5U" ? "autoshop" : "gxworks3";
   useEffect(() => { setAdapterId(expectedAdapter); setCompileRun(null); }, [expectedAdapter]);
   const evidenceRef = useRef<HTMLInputElement>(null); const [busy, setBusy] = useState(false);
+  const compileQueries = [runs, automatedReviews, compileRuns, adapters];
+  if (compileQueries.some((query) => query.isError)) return <ProjectPage kicker="P07 · AUTOMATED REVIEW & COMPILE PREP" title="项目自动审核与编译准备" description="生成后自动执行确定性复现、追溯、静态审计、参考执行和变异检测；厂商、硬件与电气确认仍未验证。"><QueryErrorState queries={compileQueries} /></ProjectPage>;
   const review = automatedReviews.data?.find((item) => item.generation_run_id === selectedRunId) || null;
   const runAutomatedReview = async () => { if (!selectedRunId) return; const selectedRun = runs.data?.find((item) => item.id === selectedRunId); if (!selectedRun) return; setBusy(true); try { const result = await api.createAutomatedReview(projectId, selectedRunId, 20, selectedRun.revision); await queryClient.invalidateQueries({ queryKey: ["automated-reviews", projectId] }); notify(result.reused ? "自动审核输入未变化，已复用不可变报告" : "项目自动审核已完成并保存不可变报告"); } catch (error) { notifyError(error); } finally { setBusy(false); } };
   const persistedCompileRun = compileRuns.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === review?.program_commit_id) || null;
@@ -579,7 +603,7 @@ function CompilePage() {
   const uploadEvidence = async (file?: File) => { if (!file || !activeCompileRun) return; setBusy(true); try { const result = await api.uploadCompileEvidence(activeCompileRun.id, file, "vendor_report", activeCompileRun.revision); setCompileRun(result.compile_run); await queryClient.invalidateQueries({ queryKey: ["compile-runs", projectId] }); notify("外部证据已按哈希保存，验证等级保持 manual_unverified"); } catch (error) { notifyError(error); } finally { setBusy(false); if (evidenceRef.current) evidenceRef.current.value = ""; } };
   const vendorAdapters = (adapters.data || []).filter((item) => item.adapter_id === expectedAdapter);
   return <ProjectPage kicker="P07 · AUTOMATED REVIEW & COMPILE PREP" title="项目自动审核与编译准备" description="生成后自动执行确定性复现、追溯、静态审计、参考执行和变异检测；厂商、硬件与电气确认仍未验证。">
-    {!runs.data?.length ? <EmptyState title="尚无生成物" text="先在 P06 从已锁定 MachineSpec 生成程序。" /> : <><div className="verification-toolbar"><label>生成任务<select value={selectedRunId} onChange={(event) => { setRunId(event.target.value); setCompileRun(null); }}>{runs.data.map((run: GenerationRun) => <option key={run.id} value={run.id}>{run.generator_version} · {formatTime(run.created_at)}</option>)}</select></label><label>厂商 Adapter<select value={adapterId} onChange={(event) => setAdapterId(event.target.value)}>{vendorAdapters.map((item: AdapterDescriptor) => <option value={item.adapter_id} key={item.adapter_id}>{item.name}</option>)}</select></label><button className="button button--primary" disabled={busy || !review} onClick={runAutomatedReview}><ListChecks size={16} />{busy ? "处理中…" : "重新运行自动审核"}</button></div>
+    {!runs.data?.length ? <EmptyState title="尚无生成物" text="先在 P06 从已锁定 MachineSpec 生成程序。" /> : <><div className="verification-toolbar"><label>生成任务<select value={selectedRunId} onChange={(event) => { setRunId(event.target.value); setCompileRun(null); }}>{runs.data.map((run: GenerationRun) => <option key={run.id} value={run.id}>{run.generator_version} · {formatTime(run.created_at)}</option>)}</select></label><label>厂商 Adapter<select value={adapterId} onChange={(event) => setAdapterId(event.target.value)}>{vendorAdapters.map((item: AdapterDescriptor) => <option value={item.adapter_id} key={item.adapter_id}>{item.name}</option>)}</select></label><button className="button button--primary" disabled={busy || !selectedRunId} onClick={runAutomatedReview}><ListChecks size={16} />{busy ? "处理中…" : "重新运行自动审核"}</button></div>
     <div className="verification-grid"><section className="panel verification-panel"><div className="panel__header"><div><h3>Automated Review v{review?.review_version || "3"}</h3><p>生成后自动执行 · 报告不可变 · 不自动修改代码</p></div><Status value={review?.status || (automatedReviews.isLoading ? "读取中" : "尚未审核")} /></div>{review ? <><div className="audit-summary"><Metric label="自动检查" value={String(review.summary.passed) + "/" + String(review.summary.total)} note={"重复生成 " + review.repeat_count + " 次"} icon={<ListChecks />} /><Metric label="失败" value={String(review.summary.failed)} note={review.input_hash.slice(0, 12)} icon={<WarningCircle />} /><Metric label="外部待验证" value={String(review.summary.external_pending)} note={review.verification_level} icon={<Info />} /></div><div className="review-claim"><Info size={17} /><span>{review.claim_boundary}</span></div><div className="finding-list automated-checks">{review.checks.map((check) => <article key={check.id}><StatusCheck status={check.status} /><span><strong>{check.title}</strong><small>{check.id} · {check.status}</small><p>{check.detail}</p>{check.action && <em>恢复动作：{check.action}</em>}</span><Status value={check.status} /></article>)}</div><div className="external-gates"><div className="external-gates__title"><WarningCircle size={17} /><span><strong>集中外部验证门</strong><small>自动审核不会将这些项目升级为通过</small></span></div>{review.external_validation_gates.map((gate) => <article key={gate.id}><span><strong>{gate.title}</strong><small>{gate.required_evidence}</small></span><Status value={gate.status} /></article>)}</div></> : <EmptyState title="自动审核报告尚未恢复" text="生成完成后会自动创建报告；若网络中断，请刷新或创建新的生成任务。" />}</section>
     <aside className="panel compile-prep"><div className="panel__header"><div><h3>厂商编译证据</h3><p>人工降级路径 · 原件不可覆盖</p></div></div><div className="boundary-card"><WarningCircle size={22} /><span><strong>{expectedAdapter === "autoshop" ? "AutoShop" : "GX Works3"} 未验证</strong>本机不会启动未知厂商程序，也不会伪造编译结果。</span></div><button className="button button--primary" disabled={busy || !review || review.status === "blocked"} onClick={prepareCompile}>创建编译准备任务</button>{activeCompileRun && <div className="compile-record"><Status value={activeCompileRun.status} /><dl><dt>验证等级</dt><dd>{activeCompileRun.verification_level}</dd><dt>Adapter</dt><dd>{activeCompileRun.adapter_id}</dd><dt>任务 ID</dt><dd>{activeCompileRun.id.slice(0, 12)}</dd><dt>证据数</dt><dd>{activeCompileRun.evidence_count ?? 0}</dd></dl>{activeCompileRun.diagnostics.map((item, index) => <p key={index}>{String(item.message || item.code || "诊断信息")}</p>)}<input ref={evidenceRef} type="file" hidden onChange={(event) => uploadEvidence(event.target.files?.[0])} /><button className="button button--outline" disabled={busy} onClick={() => evidenceRef.current?.click()}><UploadSimple size={16} />导入厂商日志或截图</button><small>导入后仍标记 manual_unverified，集中验证签字前不会升级。</small></div>}</aside></div></>}
   </ProjectPage>;
@@ -623,6 +647,8 @@ function SimulationPage() {
   const persistedSimulation = simulationRuns.data?.find((item) => item.generation_run_id === selectedRunId && item.program_commit_id === currentReview?.program_commit_id) || null;
   const activeSimulation = simulation || persistedSimulation;
   const trace = useQuery({ queryKey: ["simulation-trace", activeSimulation?.id], queryFn: () => api.getSimulationTrace(activeSimulation!.id), enabled: Boolean(activeSimulation?.id) });
+  const simulationQueries = [runs, reviews, simulationRuns, testSpecFile, trace];
+  if (simulationQueries.some((query) => query.isError)) return <ProjectPage kicker="P08 · REFERENCE SIMULATION" title="控谱参考逻辑模拟" description="受限 TestSpec/Control IR 离散扫描执行器；不是 GX Simulator3，也不是硬件实测。"><QueryErrorState queries={simulationQueries} /></ProjectPage>;
   const parseCycles = (value: string) => value.trim() ? value.split(",").map((item) => Number(item.trim())) : [];
   const loadTestCase = () => {
     const testCase = testCases.find((item) => item.id === selectedTestCase);
@@ -697,6 +723,8 @@ function SettingsPage() {
     setSendRawExcel(value.send_raw_excel);
     setSendGeneratedArtifacts(value.send_generated_artifacts);
   }, [settings.data?.revision]);
+  const settingsQueries = [projects, adapters, settings, audit, templates, compatibility, environments];
+  if (settingsQueries.some((query) => query.isError)) return <main className="hub-page"><PageHeading kicker="P12 · SETTINGS" title="本机设置与运行环境" description="设置只影响本机可选解释与数据最小化策略；厂商工具、PLC 硬件和安全能力仍未验证。" /><QueryErrorState queries={settingsQueries} /></main>;
   const saveSettings = async () => {
     if (!settings.data) return;
     setSaving(true);

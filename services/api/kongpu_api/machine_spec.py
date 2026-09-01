@@ -59,6 +59,7 @@ SIGNAL_DIRECTIONS = {"DI", "DO", "AI", "AO", "INTERNAL", "COMM"}
 DATA_TYPES = {"BOOL", "INT", "DINT", "REAL", "WORD", "DWORD", "STRING"}
 BOOL_DIRECTIONS = {"DI", "DO"}
 NUMERIC_DIRECTIONS = {"AI", "AO"}
+WRITABLE_DIRECTIONS = {"DO", "AO", "INTERNAL", "COMM"}
 
 
 def _fold_identifier(value: Any) -> str:
@@ -386,6 +387,11 @@ def parse_workbook(content: bytes, settings: Settings) -> tuple[dict[str, Any], 
     spec = {
         "schema_version": str(meta_values.get("schema_version") or SCHEMA_VERSION),
         "template_version": str(meta_values.get("template_version") or TEMPLATE_VERSION),
+        "_meta": {
+            "schema_version": str(meta_values.get("schema_version") or ""),
+            "template_version": str(meta_values.get("template_version") or ""),
+            "project_id": str(meta_values.get("project_id") or ""),
+        },
         "generated_at": str(meta_values.get("generated_at") or datetime.now(timezone.utc).isoformat()),
         "project": {
             "project_id": str(project_row.get("project_id") or ""),
@@ -437,10 +443,26 @@ def _references(expression: str | None, candidates: set[str]) -> set[str]:
     return {token for token in tokens if _fold_identifier(token) not in folded_candidates and token.upper() not in keywords and not token.isdigit()}
 
 
+def _restricted_expression(expression: Any) -> bool:
+    return expression is None or bool(
+        re.fullmatch(r"[A-Za-z0-9_\- \t.()+*/<>=]+", str(expression))
+        and not any(token in str(expression) for token in ("//", "/*", "*/", "(*", "*)"))
+    )
+
+
 def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None = None) -> list[IssueData]:
     issues: list[IssueData] = []
     project = spec["project"]
     plc = spec["plc_target"]
+    metadata = spec.get("_meta") or {}
+    if spec.get("schema_version") != SCHEMA_VERSION:
+        issues.append(IssueData("SCHEMA_VERSION_UNSUPPORTED", "blocker", "Schema 版本不受支持", f"收到 {spec.get('schema_version') or '空值'}，当前支持 {SCHEMA_VERSION}", "_meta", 1, "schema_version"))
+    if spec.get("template_version") != TEMPLATE_VERSION:
+        issues.append(IssueData("TEMPLATE_VERSION_UNSUPPORTED", "blocker", "模板版本不受支持", f"收到 {spec.get('template_version') or '空值'}，当前支持 {TEMPLATE_VERSION}", "_meta", 1, "template_version"))
+    if metadata.get("schema_version") and metadata.get("schema_version") != spec.get("schema_version"):
+        issues.append(IssueData("META_SCHEMA_MISMATCH", "blocker", "模板元数据版本不一致", "_meta 与解析出的 Schema 版本不一致", "_meta", 1, "schema_version"))
+    if metadata.get("template_version") and metadata.get("template_version") != spec.get("template_version"):
+        issues.append(IssueData("META_TEMPLATE_MISMATCH", "blocker", "模板元数据版本不一致", "_meta 与解析出的模板版本不一致", "_meta", 1, "template_version"))
     target_profile = None
     try:
         target_profile = profile_for_target(plc)
@@ -448,6 +470,8 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
         issues.append(IssueData("PLC_TARGET_UNSUPPORTED", "blocker", "PLC 目标不受支持", str(exc), "Project", project["source"]["row"], "plc_model"))
     if not project.get("project_name"):
         issues.append(IssueData("PROJECT_NAME_REQUIRED", "blocker", "项目名称为空", "Project.project_name 为必填项", "Project", project["source"]["row"], "project_name"))
+    if not project.get("project_id"):
+        issues.append(IssueData("PROJECT_ID_REQUIRED", "blocker", "项目 ID 为空", "Project.project_id 为必填项", "Project", project["source"]["row"], "project_id"))
     if project.get("cycle_target") is not None and not project.get("cycle_unit"):
         issues.append(IssueData("UNIT_REQUIRED", "blocker", "节拍缺少单位", "cycle_target 有值时必须填写 cycle_unit", "Project", project["source"]["row"], "cycle_unit"))
     if expected_project:
@@ -457,6 +481,9 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
             issues.append(IssueData("PLC_TARGET_MISMATCH", "blocker", "PLC 目标与项目不一致", f"模板目标为 {actual}，项目目标为 {expected}", "Project", project["source"]["row"], "plc_model"))
         if project.get("project_id") not in {expected_project["id"], expected_project["code"]}:
             issues.append(IssueData("PROJECT_ID_MISMATCH", "blocker", "模板项目与当前项目不一致", "请从当前项目重新下载模板", "Project", project["source"]["row"], "project_id"))
+        meta_project_id = metadata.get("project_id")
+        if meta_project_id and meta_project_id not in {expected_project["id"], expected_project["code"]}:
+            issues.append(IssueData("META_PROJECT_ID_MISMATCH", "blocker", "模板元数据与当前项目不一致", "请从当前项目重新下载模板", "_meta", 1, "project_id"))
 
     issues.extend(_identifier_issues(spec["components"], "component_id", "Components"))
     issues.extend(_identifier_issues(spec["signals"], "signal_id", "Signals"))
@@ -464,11 +491,23 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
     issues.extend(_identifier_issues(spec["interlocks"], "interlock_id", "Interlocks"))
     issues.extend(_identifier_issues(spec["exceptions"], "exception_id", "Exceptions"))
 
+    for collection, sheet, message in (
+        (spec["components"], "Components", "至少定义一个设备或元件"),
+        (spec["signals"], "Signals", "至少定义一个信号"),
+        (spec["sequence"], "Sequence", "至少定义一个流程步骤"),
+    ):
+        if not collection:
+            issues.append(IssueData("REQUIRED_DATA_EMPTY", "blocker", f"{sheet} 没有数据", message, sheet, 2))
+
     component_ids = {_fold_identifier(item["component_id"]) for item in spec["components"] if item.get("component_id")}
     signal_ids = {_fold_identifier(item["signal_id"]) for item in spec["signals"] if item.get("signal_id")}
     step_ids = {_fold_identifier(item["step_id"]) for item in spec["sequence"] if item.get("step_id")}
 
     for component in spec["components"]:
+        source = component["source"]
+        for column in ("display_name", "component_type"):
+            if not component.get(column):
+                issues.append(IssueData("REQUIRED_FIELD_MISSING", "blocker", "元件必填字段为空", f"Components.{column} 为必填项", "Components", source["row"], column, component.get("component_id")))
         parent = component.get("parent_id")
         if parent and _fold_identifier(parent) not in component_ids:
             source = component["source"]
@@ -483,6 +522,9 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
         direction = str(signal.get("direction") or "").upper()
         data_type = str(signal.get("data_type") or "").upper()
         signal_id = signal.get("signal_id")
+        for column in ("display_name", "direction", "data_type"):
+            if not signal.get(column):
+                issues.append(IssueData("REQUIRED_FIELD_MISSING", "blocker", "信号必填字段为空", f"Signals.{column} 为必填项", "Signals", source["row"], column, signal_id))
         if direction not in SIGNAL_DIRECTIONS:
             issues.append(IssueData("INVALID_SIGNAL_DIRECTION", "blocker", "信号方向无效", f"{direction} 不在允许枚举中", "Signals", source["row"], "direction", signal_id))
         if data_type not in DATA_TYPES:
@@ -497,6 +539,8 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
         if component_id and _fold_identifier(component_id) not in component_ids:
             issues.append(IssueData("SIGNAL_COMPONENT_MISSING", "blocker", "信号引用的元件不存在", f"{component_id} 未在 Components 中定义", "Signals", source["row"], "component_id", signal_id))
         address = str(signal.get("address") or "").upper()
+        if direction in {"DI", "DO"} and not address:
+            issues.append(IssueData("IO_ADDRESS_REQUIRED", "blocker", "数字量信号地址为空", f"{direction} 信号必须填写 I/O 地址", "Signals", source["row"], "address", signal_id))
         if address:
             if target_profile and not target_profile.address_pattern.fullmatch(address):
                 issues.append(IssueData("INVALID_IO_ADDRESS", "blocker", "I/O 地址格式不受目标 Profile 支持", f"{address} 不符合 {target_profile.profile_id} 的首批 X/Y/M 逻辑地址子集", "Signals", source["row"], "address", signal_id))
@@ -512,6 +556,9 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
     for step in spec["sequence"]:
         source = step["source"]
         step_id = step.get("step_id")
+        for column in ("display_name", "actions", "completion_condition"):
+            if not step.get(column):
+                issues.append(IssueData("REQUIRED_FIELD_MISSING", "blocker", "流程必填字段为空", f"Sequence.{column} 为必填项", "Sequence", source["row"], column, step_id))
         next_step = step.get("next_step_id")
         folded_step_id = _fold_identifier(step_id)
         folded_next_step = _fold_identifier(next_step)
@@ -523,6 +570,57 @@ def validate_spec(spec: dict[str, Any], expected_project: dict[str, str] | None 
         for column in ("entry_condition", "actions", "completion_condition"):
             for unknown in _references(step.get(column), signal_ids):
                 issues.append(IssueData("SIGNAL_REFERENCE_MISSING", "blocker", "步骤引用的信号不存在", f"{unknown} 未在 Signals 中定义", "Sequence", source["row"], column, step_id))
+        for column in ("entry_condition", "completion_condition"):
+            if not _restricted_expression(step.get(column)):
+                issues.append(IssueData("EXPRESSION_SYNTAX_UNSUPPORTED", "blocker", "表达式超出受限子集", f"Sequence.{column} 包含不允许的字符或语法", "Sequence", source["row"], column, step_id))
+        for statement in (value.strip() for value in re.split(r"[;\r\n]+", str(step.get("actions") or "")) if value.strip()):
+            assignment = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]*)\s*:=\s*(.+)", statement)
+            if assignment:
+                target_signal = next(
+                    (item for item in spec["signals"] if _fold_identifier(item.get("signal_id")) == _fold_identifier(assignment.group(1))),
+                    None,
+                )
+                if target_signal and str(target_signal.get("direction") or "").upper() not in WRITABLE_DIRECTIONS:
+                    issues.append(IssueData("ACTION_TARGET_DIRECTION_INVALID", "blocker", "动作目标不是可写信号", f"{assignment.group(1)} 不能由 Sequence 动作写入", "Sequence", source["row"], "actions", step_id))
+                if not _restricted_expression(assignment.group(2)):
+                    issues.append(IssueData("EXPRESSION_SYNTAX_UNSUPPORTED", "blocker", "动作表达式超出受限子集", "赋值右侧包含不允许的字符或语法", "Sequence", source["row"], "actions", step_id))
+            else:
+                issues.append(IssueData("ACTION_NOT_DETERMINISTIC", "warning", "动作不能确定性生成", f"“{statement}”不是首版 信号 := 表达式 子集，将只保留 TODO", "Sequence", source["row"], "actions", step_id))
+
+    signal_by_id = {
+        _fold_identifier(item.get("signal_id")): item for item in spec["signals"]
+        if item.get("signal_id")
+    }
+    for interlock in spec["interlocks"]:
+        source = interlock["source"]
+        action_id = interlock.get("action_id")
+        if not action_id:
+            issues.append(IssueData("INTERLOCK_ACTION_REQUIRED", "blocker", "互锁动作为空", "Interlocks.action_id 为必填项", "Interlocks", source["row"], "action_id", interlock.get("interlock_id")))
+        elif _fold_identifier(action_id) not in signal_by_id:
+            issues.append(IssueData("INTERLOCK_ACTION_MISSING", "blocker", "互锁动作信号不存在", f"{action_id} 未在 Signals 中定义", "Interlocks", source["row"], "action_id", interlock.get("interlock_id")))
+        elif str(signal_by_id[_fold_identifier(action_id)].get("direction") or "").upper() not in WRITABLE_DIRECTIONS:
+            issues.append(IssueData("INTERLOCK_ACTION_NOT_WRITABLE", "blocker", "互锁动作不是可写信号", f"{action_id} 不能作为互锁控制动作", "Interlocks", source["row"], "action_id", interlock.get("interlock_id")))
+        if not interlock.get("allow_condition"):
+            issues.append(IssueData("INTERLOCK_ALLOW_REQUIRED", "blocker", "互锁允许条件为空", "Interlocks.allow_condition 为必填项", "Interlocks", source["row"], "allow_condition", interlock.get("interlock_id")))
+        for column in ("allow_condition", "inhibit_condition"):
+            if not _restricted_expression(interlock.get(column)):
+                issues.append(IssueData("EXPRESSION_SYNTAX_UNSUPPORTED", "blocker", "表达式超出受限子集", f"Interlocks.{column} 包含不允许的字符或语法", "Interlocks", source["row"], column, interlock.get("interlock_id")))
+            for unknown in _references(interlock.get(column), signal_ids):
+                issues.append(IssueData("INTERLOCK_EXTERNAL_STATE_UNVERIFIED", "warning", "互锁引用外部状态", f"{unknown} 未在 Signals 中定义，自动验证只能按外部只读状态处理", "Interlocks", source["row"], column, interlock.get("interlock_id")))
+
+    for exception in spec["exceptions"]:
+        source = exception["source"]
+        for column in ("condition", "response"):
+            if not exception.get(column):
+                issues.append(IssueData("REQUIRED_FIELD_MISSING", "blocker", "异常必填字段为空", f"Exceptions.{column} 为必填项", "Exceptions", source["row"], column, exception.get("exception_id")))
+        if exception.get("timeout_value") is not None and not exception.get("timeout_unit"):
+            issues.append(IssueData("UNIT_REQUIRED", "blocker", "异常超时缺少单位", "timeout_value 有值时必须填写 timeout_unit", "Exceptions", source["row"], "timeout_unit", exception.get("exception_id")))
+        for column in ("condition", "reset_condition"):
+            if not _restricted_expression(exception.get(column)):
+                issues.append(IssueData("EXPRESSION_SYNTAX_UNSUPPORTED", "blocker", "表达式超出受限子集", f"Exceptions.{column} 包含不允许的字符或语法", "Exceptions", source["row"], column, exception.get("exception_id")))
+            for unknown in _references(exception.get(column), signal_ids):
+                issues.append(IssueData("EXCEPTION_EXTERNAL_STATE_UNVERIFIED", "warning", "异常引用外部状态", f"{unknown} 未在 Signals 中定义，需在厂商工程中核对来源", "Exceptions", source["row"], column, exception.get("exception_id")))
+        issues.append(IssueData("EXCEPTION_VENDOR_LOGIC_REQUIRED", "warning", "异常逻辑尚未生成到 ST", "当前确定性生成器只将异常写入 Control IR 与 TestSpec；计时器、报警输出和复位逻辑需在厂商工程集中验证", "Exceptions", source["row"], "response", exception.get("exception_id")))
 
     if spec["sequence"]:
         start = _fold_identifier(spec["sequence"][0].get("step_id"))

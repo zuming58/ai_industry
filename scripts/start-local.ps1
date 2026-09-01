@@ -19,6 +19,7 @@ function Test-Url([string]$Url) {
 }
 
 $apiUrl = "http://127.0.0.1:$ApiPort/api/v1/health"
+$apiBaseUrl = "http://127.0.0.1:$ApiPort"
 $webUrl = "http://127.0.0.1:$WebPort/"
 
 if (-not (Test-Url $apiUrl)) {
@@ -34,6 +35,7 @@ if (-not (Test-Url $apiUrl)) {
 if (-not (Test-Url $webUrl)) {
     $webLog = Join-Path $dataDir "web.log"
     $webErrorLog = Join-Path $dataDir "web-error.log"
+    $env:KONGPU_API_TARGET = $apiBaseUrl
     $web = Start-Process -FilePath "npm.cmd" -ArgumentList @(
         "run", "dev", "--", "--host", "127.0.0.1", "--port", $WebPort
     ) -WorkingDirectory (Join-Path $projectRoot "kongpu-demo") -WindowStyle Hidden -PassThru -RedirectStandardOutput $webLog -RedirectStandardError $webErrorLog
@@ -42,6 +44,13 @@ if (-not (Test-Url $webUrl)) {
 
 for ($attempt = 0; $attempt -lt 30; $attempt++) {
     if ((Test-Url $apiUrl) -and (Test-Url $webUrl)) {
+        $projects = @(Invoke-RestMethod -Uri "$apiBaseUrl/api/v1/projects?include_archived=true" -TimeoutSec 5)
+        if ($projects.Count -eq 0) {
+            & py -3.12 (Join-Path $projectRoot "scripts\seed-demo.py") --base-url $apiBaseUrl
+            if ($LASTEXITCODE -ne 0) {
+                throw "Demo seed failed. Check API logs before continuing."
+            }
+        }
         Write-Output "Web: $webUrl"
         Write-Output "API: http://127.0.0.1:$ApiPort"
         Write-Output "Docs: http://127.0.0.1:$ApiPort/docs"

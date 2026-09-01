@@ -199,6 +199,13 @@ def checkout_branch(repo: Path, name: str, base_commit: str | None = None) -> No
         _run(repo, *args)
 
 
+def current_commit(repo: Path) -> str | None:
+    """Return the checked-out commit, or None for an empty repository."""
+    with repository_guard(repo):
+        value = _run(repo, "rev-parse", "--verify", "HEAD", check=False)
+        return value if re.fullmatch(r"[0-9a-f]{40,64}", value) else None
+
+
 def safe_file(repo: Path, relative: str) -> Path:
     if not isinstance(relative, str):
         raise RepositoryError("Invalid repository file path")

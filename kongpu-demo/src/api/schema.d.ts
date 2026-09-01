@@ -2962,8 +2962,12 @@ export interface operations {
     };
     archive_project_api_v1_projects__project_id__archive_post: {
         parameters: {
-            query?: never;
-            header?: never;
+            query?: {
+                expected_revision?: number | null;
+            };
+            header?: {
+                "If-Match"?: string | null;
+            };
             path: {
                 project_id: string;
             };
@@ -2995,8 +2999,12 @@ export interface operations {
     };
     restore_project_api_v1_projects__project_id__restore_post: {
         parameters: {
-            query?: never;
-            header?: never;
+            query?: {
+                expected_revision?: number | null;
+            };
+            header?: {
+                "If-Match"?: string | null;
+            };
             path: {
                 project_id: string;
             };

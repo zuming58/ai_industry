@@ -18,6 +18,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from .artifacts import ArtifactIntegrityError, read_stored_bytes, store_bytes
 from .adapters import descriptor, descriptors, detect as detect_adapter
@@ -60,7 +61,7 @@ from .models import (
     ValidationIssue, new_id,
 )
 from .repository import (
-    RepositoryError, checkout_branch, commit_all, commit_diff, compare_commits, create_generated_commit, ensure_repository,
+    RepositoryError, checkout_branch, commit_all, commit_diff, compare_commits, create_generated_commit, current_commit, ensure_repository,
     is_working_tree_clean, list_files, list_files_at_commit, parent_of, read_file,
     read_file_at_commit, repository_guard, repository_path, validate_branch_name, write_files,
 )
@@ -164,6 +165,18 @@ def create_app(
                 "message": str(exc),
                 "location": None,
                 "action": "停止使用该工件并检查本机数据目录",
+            },
+        )
+
+    @application.exception_handler(StaleDataError)
+    async def stale_data_error(_request: Request, _exc: StaleDataError) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": "REVISION_CONFLICT",
+                "message": "数据已被其他操作更新，当前修改未保存",
+                "location": None,
+                "action": "刷新页面后重新操作",
             },
         )
 
@@ -1117,10 +1130,16 @@ def commissioning_task_dict(item: CommissioningTask) -> dict[str, Any]:
 
 def check_expected_revision(current: int, expected: int | None, etag: str | None = None) -> None:
     requested = expected
-    if etag:
-        token = etag.strip('\"')
-        if token.isdigit():
-            requested = int(token)
+    if etag is not None:
+        token = etag.strip().strip('\"')
+        if not token.isdigit():
+            raise api_error("INVALID_ETAG", "If-Match 必须是当前 revision 数字", 400, action="刷新页面后重试")
+        etag_revision = int(token)
+        if expected is not None and expected != etag_revision:
+            raise api_error("REVISION_CONFLICT", "请求中的 revision 与 If-Match 不一致", 409, action="刷新后重新操作")
+        requested = etag_revision
+    if requested is None:
+        raise api_error("PRECONDITION_REQUIRED", "修改数据时必须提供当前 revision 或 If-Match", 428, action="刷新页面后重试")
     if requested is not None and requested != current:
         raise api_error("REVISION_CONFLICT", f"数据已更新，当前版本为 {current}", 409, action="刷新后重新操作")
 
@@ -4050,7 +4069,9 @@ def update_project(
         "plc_model": changes.get("plc_model", project.plc_model),
     }
     try:
-        normalized_target = normalize_project_target(**proposed)
+        normalized_target = normalize_project_target(
+            proposed["plc_brand"], proposed["plc_series"], proposed["plc_model"]
+        )
     except TargetProfileError as exc:
         raise api_error("PLC_TARGET_UNSUPPORTED", str(exc), 422, action="从兼容矩阵选择受支持的 PLC 目标")
     changes.update(normalized_target)
@@ -4069,16 +4090,23 @@ def update_project(
                     spec_revision.status = "stale"
                 for confirmation in list(spec_revision.confirmations):
                     session.delete(confirmation)
-        if project.current_spec_revision_id:
-            project.status = "目标已变更，资料过期"
+        # Historical locked snapshots remain immutable, but a target change must
+        # never leave one selectable as the active generation baseline.
+        project.current_spec_revision_id = None
+        project.current_import_id = None
+        project.status = "目标已变更，资料过期"
     project.revision += 1
     audit(session, project.id, "project.updated", "Project", project.id, {"changes": changes, "target_changed": target_changed})
     session.commit()
     return project_dict(project)
 
 
-def set_archived(project_id: str, archived: bool, session: Session) -> dict[str, Any]:
+def set_archived(
+    project_id: str, archived: bool, expected_revision: int | None,
+    if_match: str | None, session: Session,
+) -> dict[str, Any]:
     project = require_project(session, project_id)
+    check_expected_revision(project.revision, expected_revision, if_match)
     project.archived = archived
     project.revision += 1
     audit(session, project.id, "project.archived" if archived else "project.restored", "Project", project.id)
@@ -4087,13 +4115,23 @@ def set_archived(project_id: str, archived: bool, session: Session) -> dict[str,
 
 
 @router.post("/api/v1/projects/{project_id}/archive")
-def archive_project(project_id: str, session: Session = Depends(app_session)) -> dict[str, Any]:
-    return set_archived(project_id, True, session)
+def archive_project(
+    project_id: str,
+    expected_revision: int | None = Query(default=None, ge=1),
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    return set_archived(project_id, True, expected_revision, if_match, session)
 
 
 @router.post("/api/v1/projects/{project_id}/restore")
-def restore_project(project_id: str, session: Session = Depends(app_session)) -> dict[str, Any]:
-    return set_archived(project_id, False, session)
+def restore_project(
+    project_id: str,
+    expected_revision: int | None = Query(default=None, ge=1),
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    session: Session = Depends(app_session),
+) -> dict[str, Any]:
+    return set_archived(project_id, False, expected_revision, if_match, session)
 
 
 @router.get("/api/v1/template-versions/current")
@@ -4197,6 +4235,7 @@ def create_import(
         "plc_model": project.plc_model,
     }
     issues = parse_issues + validate_spec(spec, expected)
+    spec.pop("_meta", None)
     revision = create_revision(session, project, import_version, spec, 1, issues)
     audit(session, project.id, "import.created", "ImportVersion", import_version.id, {"filename": filename, "sha256": artifact.record.sha256})
     session.commit()
@@ -4387,6 +4426,8 @@ def confirm_view(
     session: Session = Depends(app_session),
 ) -> dict[str, Any]:
     revision = require_spec(session, revision_id)
+    if revision.status == "locked":
+        raise api_error("SPEC_LOCKED_IMMUTABLE", "已锁定的 MachineSpec 不可修改确认记录", 409, action="基于锁定快照创建新的工作版本")
     check_expected_revision(revision.revision, payload.expected_revision, if_match)
     allowed = set(required_review_views(json.loads(revision.data_json)))
     if view not in allowed:
@@ -4418,6 +4459,8 @@ def accept_warning(
     session: Session = Depends(app_session),
 ) -> dict[str, Any]:
     revision = require_spec(session, revision_id)
+    if revision.status == "locked":
+        raise api_error("SPEC_LOCKED_IMMUTABLE", "已锁定的 MachineSpec 不可修改警告记录", 409, action="基于锁定快照创建新的工作版本")
     check_expected_revision(revision.revision, payload.expected_revision, if_match)
     issue = session.get(ValidationIssue, issue_id)
     if issue is None or issue.spec_revision_id != revision.id:
@@ -4441,7 +4484,12 @@ def lock_spec(
     session: Session = Depends(app_session),
 ) -> dict[str, Any]:
     revision = require_spec(session, revision_id)
+    if revision.status == "locked":
+        raise api_error("SPEC_ALREADY_LOCKED", "该 MachineSpec 已经锁定，不能重复锁定", 409, action="基于锁定快照创建新的工作版本")
     check_expected_revision(revision.revision, payload.expected_revision, if_match)
+    project = require_project(session, revision.project_id)
+    if project.current_spec_revision_id != revision.id:
+        raise api_error("SPEC_NOT_CURRENT", "只能锁定当前项目的最新 MachineSpec 版本", 409, action="刷新项目并从当前导入版本继续审阅")
     data = json.loads(revision.data_json)
     issues = session.scalars(
         select(ValidationIssue).where(ValidationIssue.spec_revision_id == revision.id)
@@ -4483,7 +4531,6 @@ def lock_spec(
         session.flush()
     revision.status = "locked"
     revision.revision += 1
-    project = require_project(session, revision.project_id)
     project.status = "规格锁定"
     project.current_spec_revision_id = revision.id
     project.revision += 1
@@ -4527,6 +4574,14 @@ def create_generation_run(
     revision = require_spec(session, revision_id)
     if revision.project_id != project.id or revision.status != "locked":
         raise api_error("LOCKED_SPEC_REQUIRED", "只能从当前项目已锁定的 MachineSpec 生成程序", 409, action="选择已锁定规格")
+    if project.current_spec_revision_id != revision.id:
+        raise api_error("LOCKED_SPEC_REQUIRED", "只能从当前项目的已锁定 MachineSpec 生成程序", 409, action="重新导入与当前 PLC 目标匹配的模板")
+    spec_data = json.loads(revision.data_json)
+    spec_target = spec_data.get("plc_target", {})
+    if (spec_target.get("brand"), spec_target.get("series"), spec_target.get("model")) != (
+        project.plc_brand, project.plc_series, project.plc_model
+    ):
+        raise api_error("PLC_TARGET_MISMATCH", "锁定规格的 PLC 目标与当前项目不一致", 409, action="重新导入当前项目模板")
     locked = session.scalar(
         select(LockedMachineSpec).where(LockedMachineSpec.spec_revision_id == revision.id)
     )
@@ -4710,7 +4765,13 @@ def create_program_branch(
         )
         if duplicate is not None:
             raise api_error("BRANCH_ALREADY_EXISTS", "程序分支已存在", 409)
+        repository_head = current_commit(repo)
+        if repository_head is None:
+            raise RepositoryError("仓库尚无 Commit，不能创建程序分支")
         checkout_branch(repo, payload.name, payload.base_commit)
+        head = current_commit(repo)
+        if head is None:
+            raise RepositoryError("程序分支没有有效 Commit")
     except RepositoryError as exc:
         raise api_error("REPOSITORY_ERROR", str(exc), 422)
     branch = ProgramBranch(
@@ -4718,9 +4779,10 @@ def create_program_branch(
         name=payload.name,
         git_ref=f"refs/heads/{payload.name}",
         base_commit=payload.base_commit,
-        head_commit=payload.base_commit,
+        head_commit=head,
     )
     session.add(branch)
+    session.flush()
     workspace.revision += 1
     audit(session, project_id, "program.branch_created", "ProgramBranch", branch.id, {"name": payload.name})
     session.commit()

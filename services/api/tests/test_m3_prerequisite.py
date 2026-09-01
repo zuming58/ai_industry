@@ -472,7 +472,7 @@ def test_generation_audit_checks_artifact_integrity_trace_and_internal_state(loc
     baseline = audit_bundle(spec, bundle)
     baseline_codes = {item["code"] for item in baseline["findings"]}
     assert baseline["status"] == "review_ready"
-    assert "INTERLOCK_INTERNAL_STATE_UNDECLARED" in baseline_codes
+    assert "INTERLOCK_EXTERNAL_STATE_UNVERIFIED" in baseline_codes
 
     missing_file = deepcopy(bundle)
     del missing_file.files["README.md"]

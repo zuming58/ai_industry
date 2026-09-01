@@ -235,14 +235,14 @@ def audit_bundle(spec: dict[str, Any], bundle: GeneratedBundle) -> dict[str, Any
         )
         for token in internal_symbols:
             findings.append(_finding(
-                "INTERLOCK_INTERNAL_STATE_UNDECLARED",
+                "INTERLOCK_EXTERNAL_STATE_UNVERIFIED",
                 "warning",
-                "互锁内部状态未显式建模",
-                f"互锁 {interlock.get('interlock_id')} 使用内部状态 {token}；参考模拟按只读 false 处理。",
+                "互锁外部状态映射未验证",
+                f"互锁 {interlock.get('interlock_id')} 使用外部状态 {token}；生成器已声明只读占位变量，但厂商工程映射未验证。",
                 file="generated/ControlIR.json",
                 entity_id=interlock.get("interlock_id"),
                 source=interlock.get("source"),
-                action="在 Signals 或确定性状态模型中声明该状态并重新生成",
+                action="在 Signals 中声明该状态，或在集中厂商验证时完成只读变量映射",
             ))
     signal_by_address: dict[str, list[dict[str, Any]]] = {}
     for signal in signals:
@@ -273,6 +273,18 @@ def audit_bundle(spec: dict[str, Any], bundle: GeneratedBundle) -> dict[str, Any
         for target in sorted(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)", str(step.get("actions") or ""))):
             if signal_directions.get(_fold_identifier(target)) not in {"DO", "AO", "INTERNAL", "COMM"}:
                 findings.append(_finding("ACTION_TARGET_DIRECTION_INVALID", "blocker", "动作目标方向无效", f"工步 {step.get('id')} 尝试写入 {target}；动作只能写 DO、AO、INTERNAL 或 COMM。", file="src/PRG_AutoCycle.st", line=_line_for(step.get("id"), bundle), entity_id=step.get("id"), source=step.get("source"), action="修正 Signals 方向或 Sequence 动作后重新生成"))
+        program = bundle.files.get("src/PRG_AutoCycle.st", "")
+        for assignment in step.get("action_assignments", []):
+            target = str(assignment.get("target") or "")
+            expression = str(assignment.get("expression") or "")
+            if not target or not expression or not re.search(
+                rf"\b{re.escape(target)}\s*:=\s*{re.escape(expression)}\s*;",
+                program,
+                re.IGNORECASE,
+            ):
+                findings.append(_finding("ACTION_ST_MISSING", "blocker", "确定性动作未写入 ST", f"工步 {step.get('id')} 的动作目标 {target or '空'} 未出现在可执行 ST 中。", file="src/PRG_AutoCycle.st", line=_line_for(step.get("id"), bundle), entity_id=step.get("id"), source=step.get("source"), action="修复生成器并重新生成"))
+        for unsupported in step.get("unsupported_actions", []):
+            findings.append(_finding("ACTION_NOT_GENERATED", "warning", "动作未转换为 ST", f"工步 {step.get('id')} 的动作“{unsupported}”不属于首版确定性赋值子集，已保留 TODO。", file="src/PRG_AutoCycle.st", line=_line_for(step.get("id"), bundle), entity_id=step.get("id"), source=step.get("source"), action="将动作拆成明确的 信号 := 表达式，或由电气工程师在程序分支实现"))
     steps = bundle.control_ir.get("steps", [])
     ids = {_fold_identifier(item.get("id")) for item in steps}
     steps_by_id = {_fold_identifier(item.get("id")): item for item in steps}
@@ -327,6 +339,7 @@ def audit_bundle(spec: dict[str, Any], bundle: GeneratedBundle) -> dict[str, Any
         if exception.get("timeout_value") and not exception.get("timeout_unit"):
             findings.append(_finding("EXCEPTION_TIMEOUT_UNIT_MISSING", "warning", "异常超时缺少单位", f"异常 {exception.get('exception_id')} 有超时数值但没有单位。", file="tests/TestSpec.json", entity_id=exception.get("exception_id"), source=exception.get("source"), action="补充 timeout_unit 后重新生成"))
     for exception in bundle.control_ir.get("exceptions", []):
+        findings.append(_finding("EXCEPTION_VENDOR_LOGIC_REQUIRED", "warning", "异常逻辑未生成到 ST", f"异常 {exception.get('exception_id')} 仅存在于 Control IR 与 TestSpec；厂商 ST 计时、报警和复位逻辑未实现。", file="tests/TestSpec.json", entity_id=exception.get("exception_id"), source=exception.get("source"), action="在厂商工程集中验证批次实现并回填自动回归"))
         if not exception.get("operator_message"):
             findings.append(_finding("OPERATOR_MESSAGE_TODO", "warning", "报警文本待补充", f"{exception.get('exception_id')} 未填写操作员消息。", file="tests/TestSpec.json", entity_id=exception.get("exception_id"), source=exception.get("source"), action="补充 operator_message 后重新生成"))
     program = bundle.files.get("src/PRG_AutoCycle.st", "")

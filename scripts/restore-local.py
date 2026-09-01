@@ -15,6 +15,51 @@ from local_data_archive import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def replace_prepared_files(data_dir: Path, temporary_files: dict[str, Path]) -> None:
+    """Replace all manifest files with in-process rollback on partial failure."""
+    replacement_order = sorted(
+        temporary_files, key=lambda value: (value == DATABASE_NAME, value)
+    )
+    changed: list[tuple[Path, Path | None]] = []
+    try:
+        for member_name in replacement_order:
+            destination = ensure_destination_parent(data_dir, member_name)
+            temporary = temporary_files[member_name]
+            if temporary.is_symlink() or not temporary.is_file():
+                raise ArchiveSafetyError(f"Restore temporary file is unsafe: {temporary}")
+            rollback = None
+            if destination.exists():
+                if destination.is_symlink() or not destination.is_file():
+                    raise ArchiveSafetyError(f"Restore destination is unsafe: {destination}")
+                rollback = destination.with_name(
+                    f".{destination.name}.{uuid.uuid4().hex}.rollback"
+                )
+                os.replace(destination, rollback)
+            changed.append((destination, rollback))
+            os.replace(temporary, destination)
+    except Exception:
+        rollback_failures: list[str] = []
+        for destination, rollback in reversed(changed):
+            try:
+                if rollback is not None and rollback.is_file() and not rollback.is_symlink():
+                    os.replace(rollback, destination)
+                elif rollback is None and destination.is_file() and not destination.is_symlink():
+                    destination.unlink()
+            except OSError as rollback_error:
+                rollback_failures.append(f"{destination}: {rollback_error}")
+        if rollback_failures:
+            raise ArchiveSafetyError(
+                "Restore failed and rollback was incomplete: " + "; ".join(rollback_failures)
+            )
+        raise
+    else:
+        for _destination, rollback in changed:
+            if rollback is not None and rollback.is_file() and not rollback.is_symlink():
+                rollback.unlink()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Restore Kongpu local data without deleting unrelated files.")
     parser.add_argument("backup", type=Path)
@@ -52,15 +97,7 @@ def main() -> None:
                 temporary_files[member_name] = temporary
 
         assert_sqlite_integrity(temporary_files[DATABASE_NAME])
-        replacement_order = sorted(
-            temporary_files, key=lambda value: (value == DATABASE_NAME, value)
-        )
-        for member_name in replacement_order:
-            destination = ensure_destination_parent(data_dir, member_name)
-            temporary = temporary_files[member_name]
-            if temporary.is_symlink() or not temporary.is_file():
-                raise ArchiveSafetyError(f"Restore temporary file is unsafe: {temporary}")
-            os.replace(temporary, destination)
+        replace_prepared_files(data_dir, temporary_files)
         print(
             f"Restored {len(temporary_files)} files into {data_dir}. "
             "Existing unrelated files were not deleted."

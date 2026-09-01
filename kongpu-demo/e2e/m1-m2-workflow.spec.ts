@@ -60,7 +60,7 @@ test("P01-P06 and P11 complete the real local workflow", async ({ page }) => {
   while (await page.getByRole("button", { name: /接受：/ }).count()) {
     page.once("dialog", (dialog) => dialog.accept("E2E 自动化复核：接受范例中的非阻断提示"));
     await page.getByRole("button", { name: /接受：/ }).first().click();
-    await expect(page.getByText("Warning 已接受并写入审计记录")).toBeVisible();
+    await expect(page.getByText("Warning 处理理由已写入审计记录；外部验证等级未改变")).toBeVisible();
   }
 
   const requiredViews = await page.locator(".tab-strip button").allTextContents();

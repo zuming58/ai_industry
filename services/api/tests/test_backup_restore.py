@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import sqlite3
 import subprocess
@@ -23,6 +24,13 @@ from local_data_archive import (  # noqa: E402
     normalize_member_name,
     validate_zip_members,
 )
+
+restore_spec = importlib.util.spec_from_file_location(
+    "kongpu_restore_local", SCRIPTS / "restore-local.py"
+)
+assert restore_spec and restore_spec.loader
+restore_local = importlib.util.module_from_spec(restore_spec)
+restore_spec.loader.exec_module(restore_local)
 
 
 def run_backup(source: Path, backup: Path) -> subprocess.CompletedProcess[str]:
@@ -238,3 +246,41 @@ def test_restore_rejects_corrupt_sqlite_before_replacing_existing_database(
     assert "SQLite" in result.stderr
     assert existing_database.read_bytes() == b"existing-database-must-survive"
     assert not (restored / "artifacts" / "sha256" / "sample.bin").exists()
+
+
+def test_restore_rolls_back_all_replacements_after_mid_commit_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    restored = tmp_path / "restored"
+    restored.mkdir()
+    first = restored / "artifacts" / "first.bin"
+    second = restored / "kongpu.sqlite3"
+    first.parent.mkdir(parents=True)
+    first.write_bytes(b"old-first")
+    second.write_bytes(b"old-database")
+
+    staged_first = restored / ".first.restore"
+    staged_second = restored / ".database.restore"
+    staged_first.write_bytes(b"new-first")
+    staged_second.write_bytes(b"new-database")
+    real_replace = restore_local.os.replace
+    calls = 0
+
+    def fail_once(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls == 4:
+            raise OSError("injected replacement failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(restore_local.os, "replace", fail_once)
+    with pytest.raises(OSError, match="injected"):
+        restore_local.replace_prepared_files(
+            restored,
+            {
+                "artifacts/first.bin": staged_first,
+                "kongpu.sqlite3": staged_second,
+            },
+        )
+    assert first.read_bytes() == b"old-first"
+    assert second.read_bytes() == b"old-database"

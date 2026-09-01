@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from sqlalchemy import select
 
-from kongpu_api.generator import generate_bundle
+from kongpu_api.audit import audit_bundle
+from kongpu_api.generator import GeneratedBundle, generate_bundle
 import kongpu_api.main as api_main
 from kongpu_api.models import ProgramBranch, ProgramCommit, ProgramWorkspace
 from kongpu_api.repository import RepositoryError, safe_file
@@ -175,6 +176,78 @@ def test_generation_requires_locked_spec(client: TestClient, project: dict) -> N
     assert response.json()["code"] == "LOCKED_SPEC_REQUIRED"
 
 
+def test_locked_spec_is_immutable_and_old_target_cannot_generate(
+    client: TestClient, project: dict, locked_example: dict
+) -> None:
+    revision = locked_example["revision"]
+    duplicate_lock = client.post(
+        f"/api/v1/spec-revisions/{revision['id']}/lock",
+        json={"confirmed_by": "自动化测试", "expected_revision": revision["revision"]},
+    )
+    assert duplicate_lock.status_code == 409
+    assert duplicate_lock.json()["code"] == "SPEC_ALREADY_LOCKED"
+
+    confirmation = client.put(
+        f"/api/v1/spec-revisions/{revision['id']}/confirmations/{revision['required_views'][0]}",
+        json={"confirmed_by": "自动化测试", "expected_revision": revision["revision"]},
+    )
+    assert confirmation.status_code == 409
+    assert confirmation.json()["code"] == "SPEC_LOCKED_IMMUTABLE"
+
+    current_project = client.get(f"/api/v1/projects/{project['id']}").json()
+    changed = client.patch(
+        f"/api/v1/projects/{project['id']}",
+        json={
+            "plc_brand": "汇川技术",
+            "plc_series": "H5U",
+            "plc_model": "H5U-1614MTD-A8",
+            "expected_revision": current_project["revision"],
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["current_spec_revision_id"] is None
+
+    generated = client.post(
+        f"/api/v1/projects/{project['id']}/generation-runs",
+        json={"spec_revision_id": revision["id"]},
+    )
+    assert generated.status_code == 409
+    assert generated.json()["code"] == "LOCKED_SPEC_REQUIRED"
+
+
+def test_only_current_machine_spec_revision_can_be_locked(
+    client: TestClient, imported_example: dict
+) -> None:
+    old_revision = imported_example["revision"]
+    revalidated = client.post(
+        f"/api/v1/imports/{old_revision['import_id']}/validate",
+        headers={"If-Match": str(imported_example["import"]["revision"])},
+    )
+    assert revalidated.status_code == 200, revalidated.text
+
+    for issue in old_revision["issues"]:
+        if issue["severity"] == "warning":
+            response = client.post(
+                f"/api/v1/spec-revisions/{old_revision['id']}/warnings/{issue['id']}/accept",
+                json={"reason": "历史版本测试", "expected_revision": old_revision["revision"]},
+            )
+            assert response.status_code == 200, response.text
+            old_revision = response.json()
+    for view in old_revision["required_views"]:
+        response = client.put(
+            f"/api/v1/spec-revisions/{old_revision['id']}/confirmations/{view}",
+            json={"confirmed_by": "自动化测试", "expected_revision": old_revision["revision"]},
+        )
+        assert response.status_code == 200, response.text
+        old_revision = response.json()
+    locked = client.post(
+        f"/api/v1/spec-revisions/{old_revision['id']}/lock",
+        json={"confirmed_by": "自动化测试", "expected_revision": old_revision["revision"]},
+    )
+    assert locked.status_code == 409
+    assert locked.json()["code"] == "SPEC_NOT_CURRENT"
+
+
 def test_deterministic_generator(locked_example: dict) -> None:
     spec = locked_example["revision"]["data"]
     first = generate_bundle(spec)
@@ -188,6 +261,36 @@ def test_deterministic_generator(locked_example: dict) -> None:
     assert {("interlock", item["interlock_id"]) for item in spec["interlocks"]} <= traced
     assert {("exception", item["exception_id"]) for item in spec["exceptions"]} <= traced
     assert {("test_case", f"TEST_{item['step_id']}") for item in spec["sequence"]} <= traced
+
+
+def test_generator_emits_executable_assignment_mode_reset_and_interlock(
+    locked_example: dict,
+) -> None:
+    spec = locked_example["revision"]["data"]
+    bundle = generate_bundle(spec)
+    program = bundle.files["src/PRG_AutoCycle.st"]
+    gvl = bundle.files["src/GVL_IO.st"]
+    assert "SIG_LIFT_EXTEND := TRUE;" in program
+    assert "IF KP_Reset THEN" in program
+    assert "ELSIF KP_ModeAuto AND NOT KP_Fault THEN" in program
+    assert "IF (SIG_TRAY_PRESENT) AND NOT (KP_EXT_AxisMoving) THEN" in program
+    assert "KP_EXT_AxisMoving : BOOL;" in gvl
+    assert "TODO ACTION_NOT_GENERATED" in program
+    assert any(item["code"] == "ACTION_NOT_GENERATED" for item in bundle.warnings)
+
+    tampered_files = dict(bundle.files)
+    tampered_files["src/PRG_AutoCycle.st"] = program.replace(
+        "SIG_LIFT_EXTEND := TRUE;", "// assignment removed"
+    )
+    tampered = GeneratedBundle(
+        bundle.control_ir,
+        tampered_files,
+        bundle.test_spec,
+        bundle.trace_links,
+        bundle.warnings,
+    )
+    codes = {item["code"] for item in audit_bundle(spec, tampered)["findings"]}
+    assert "ACTION_ST_MISSING" in codes
 
 
 def test_generator_resolves_case_insensitive_signal_and_step_references(locked_example: dict) -> None:
@@ -228,6 +331,14 @@ def test_generation_edit_commit_and_diff(
     listing = client.get(f"/api/v1/branches/{branch_id}/files")
     assert listing.status_code == 200, listing.text
     branch = listing.json()["branch"]
+
+    created_branch = client.post(
+        f"/api/v1/projects/{project['id']}/branches",
+        json={"name": "engineer/manual-review", "base_commit": branch["head_commit"]},
+    )
+    assert created_branch.status_code == 201, created_branch.text
+    assert created_branch.json()["id"]
+    assert created_branch.json()["head_commit"] == branch["head_commit"]
     source = client.get(f"/api/v1/branches/{branch_id}/files/src/PRG_AutoCycle.st")
     assert source.status_code == 200
     changed_content = source.json()["content"] + chr(10) + "// Reviewed locally." + chr(10)
