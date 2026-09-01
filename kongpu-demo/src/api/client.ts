@@ -107,6 +107,12 @@ export const api = {
   async getImport(id: string): Promise<ImportVersion> {
     return ensure(await apiClient.GET("/api/v1/imports/{import_id}", { params: { path: { import_id: id } } }));
   },
+  async downloadImportValidationReport(id: string, kind: "json" | "markdown"): Promise<Blob> {
+    return ensure(await apiClient.GET("/api/v1/imports/{import_id}/validation-report", {
+      params: { path: { import_id: id }, query: { kind } },
+      parseAs: "blob",
+    }));
+  },
   async getRevision(id: string): Promise<SpecRevision> {
     return ensure(await apiClient.GET("/api/v1/spec-revisions/{revision_id}", { params: { path: { revision_id: id } } }));
   },

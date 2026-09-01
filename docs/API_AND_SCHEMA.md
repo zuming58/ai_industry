@@ -21,6 +21,7 @@
 | 模板下载 | POST /api/v1/projects/{project_id}/templates?kind=blank 或 example |
 | 导入 | POST /api/v1/projects/{project_id}/imports |
 | 导入读取 | GET /api/v1/imports/{import_id}、issues、sheets/{sheet} |
+| 校验报告 | GET /api/v1/imports/{import_id}/validation-report?kind=json 或 markdown |
 | 修订与校验 | PATCH /api/v1/imports/{import_id}/cells、POST validate |
 | 审阅 | GET /api/v1/spec-revisions/{revision_id} |
 | 确认/警告 | PUT confirmations/{view}、POST warnings/{issue_id}/accept |
@@ -135,6 +136,8 @@ Commit 比较只能在同一 ProgramWorkspace 中执行，使用两个明确 Git
 汇川 Profile 首批只接受 `X/Y/M` 逻辑地址格式。生成器不会为 H5U 写入未经公开资料和实机验证的 `AT` 地址绑定，而是在 ST 变量注释和 Control IR 中保留逻辑地址；因此本机结果是“自动验证通过”，不是 AutoShop 编译通过。
 
 ## MachineSpec v1
+
+导入校验报告可通过 `GET /api/v1/imports/{import_id}/validation-report?kind=json|markdown` 导出。JSON 使用 `kongpu-validation-report/v1` 契约，绑定项目与 PLC 目标、ImportVersion、原始 Excel 工件 SHA-256、模板/Schema、当前 MachineSpec revision 及内容哈希，并按 blocker、warning、suggestion、info 汇总完整问题定位。问题按等级、工作表、行、列、code 和 ID 稳定排序；响应使用 ETag 标识内容哈希。导出是只读操作，不创建工件、不修改 import/revision/status/确认/锁定状态，也不升级厂商工具、硬件或电气验证等级。
 
 顶层字段：schema_version、template_version、generated_at、project、plc_target、components、signals、sequence、interlocks、exceptions。
 

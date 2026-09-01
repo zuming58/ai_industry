@@ -1589,6 +1589,202 @@ def issue_dict(issue: ValidationIssue) -> dict[str, Any]:
     }
 
 
+def import_validation_report(
+    session: Session, item: ImportVersion
+) -> dict[str, Any]:
+    """Build a deterministic, read-only report for the current import revision."""
+    project = session.get(Project, item.project_id)
+    artifact = session.get(SourceArtifact, item.source_artifact_id)
+    revision = (
+        session.get(MachineSpecRevision, item.current_revision_id)
+        if item.current_revision_id
+        else None
+    )
+    if project is None:
+        raise api_error(
+            "PROJECT_NOT_FOUND",
+            "导入版本关联的项目不存在",
+            409,
+            action="停止使用该导入版本并检查本机数据库",
+        )
+    if artifact is None:
+        raise api_error(
+            "ARTIFACT_NOT_FOUND",
+            "导入版本关联的原始 Excel 工件不存在",
+            409,
+            action="停止使用该导入版本并检查本机工件库",
+        )
+    if revision is None:
+        raise api_error(
+            "SPEC_REVISION_NOT_FOUND",
+            "导入版本尚无可导出的 MachineSpec revision",
+            409,
+            action="先完成 Excel 解析与校验",
+        )
+    if revision.import_id != item.id or revision.project_id != item.project_id:
+        raise api_error(
+            "IMPORT_REVISION_MISMATCH",
+            "当前 MachineSpec revision 与导入项目不一致",
+            409,
+            action="停止使用该导入版本并检查本机数据库",
+        )
+
+    spec = json.loads(revision.data_json)
+    severity_order = {"blocker": 0, "warning": 1, "suggestion": 2, "info": 3}
+    issue_rows = list(
+        session.scalars(
+            select(ValidationIssue).where(
+                ValidationIssue.spec_revision_id == revision.id
+            )
+        ).all()
+    )
+    issue_rows.sort(
+        key=lambda issue: (
+            severity_order.get(issue.severity, 99),
+            issue.sheet or "",
+            issue.row_number if issue.row_number is not None else -1,
+            issue.column_name or "",
+            issue.code,
+            issue.id,
+        )
+    )
+    issues = [
+        {
+            **issue_dict(issue),
+            "created_at": issue.created_at.isoformat(),
+            "updated_at": issue.updated_at.isoformat(),
+        }
+        for issue in issue_rows
+    ]
+    by_severity = {severity: 0 for severity in severity_order}
+    for issue in issues:
+        by_severity[issue["severity"]] = by_severity.get(issue["severity"], 0) + 1
+    as_of_values = [
+        item.updated_at.isoformat(),
+        revision.updated_at.isoformat(),
+        artifact.updated_at.isoformat(),
+        *[issue["updated_at"] for issue in issues],
+    ]
+    return {
+        "schema": "kongpu-validation-report/v1",
+        "as_of": max(as_of_values),
+        "project": {
+            "id": project.id,
+            "code": project.code,
+            "name": project.name,
+            "plc_target": {
+                "brand": project.plc_brand,
+                "series": project.plc_series,
+                "model": project.plc_model,
+            },
+        },
+        "import": {
+            "id": item.id,
+            "version": item.version,
+            "status": item.status,
+            "revision": item.revision,
+            "filename": item.filename,
+            "source_artifact": {
+                "id": artifact.id,
+                "sha256": artifact.sha256,
+                "size_bytes": artifact.size_bytes,
+                "media_type": artifact.media_type,
+                "original_name": artifact.original_name,
+            },
+        },
+        "template": {
+            "version": str(spec.get("template_version", "1.0")),
+            "schema_version": revision.schema_version,
+        },
+        "spec_revision": {
+            "id": revision.id,
+            "sequence": revision.sequence,
+            "status": revision.status,
+            "revision": revision.revision,
+            "content_hash": revision.content_hash,
+            "created_at": revision.created_at.isoformat(),
+            "updated_at": revision.updated_at.isoformat(),
+        },
+        "summary": {
+            "total": len(issues),
+            "by_severity": by_severity,
+            "unresolved": sum(not issue["resolved"] for issue in issues),
+            "accepted_warnings": sum(
+                issue["severity"] == "warning" and bool(issue["accepted_reason"])
+                for issue in issues
+            ),
+        },
+        "issues": issues,
+        "claim_boundary": "报告只反映所绑定原始 Excel 与当前 MachineSpec revision 的确定性校验结果；不代表厂商工具编译、硬件实测或电气工程师确认。",
+    }
+
+
+def render_import_validation_report_markdown(report: dict[str, Any]) -> bytes:
+    """Render a deterministic validation report for external review."""
+    project = report["project"]
+    imported = report["import"]
+    revision = report["spec_revision"]
+    source = imported["source_artifact"]
+    summary = report["summary"]
+    target = project["plc_target"]
+    lines = [
+        "# 控谱 MachineSpec 校验报告",
+        "",
+        f"- Schema：`{report['schema']}`",
+        f"- 截止时间：`{report['as_of']}`",
+        f"- 项目：{project['name']}（`{project['code']}`）",
+        f"- PLC 目标：{target['brand']} {target['series']} {target['model']}",
+        f"- 导入版本：`{imported['id']}` / v{imported['version']} / {imported['status']}",
+        f"- MachineSpec revision：`{revision['id']}` / sequence {revision['sequence']} / {revision['status']}",
+        f"- MachineSpec SHA-256：`{revision['content_hash']}`",
+        f"- 原始 Excel：{source['original_name']}（`{source['sha256']}`，{source['size_bytes']} bytes）",
+        f"- Template / Schema：v{report['template']['version']} / v{report['template']['schema_version']}",
+        "",
+        "## 汇总",
+        "",
+        "| 总数 | Blocker | Warning | Suggestion | Info | 未解决 | 已接受 Warning |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        (
+            f"| {summary['total']} | {summary['by_severity'].get('blocker', 0)} | "
+            f"{summary['by_severity'].get('warning', 0)} | {summary['by_severity'].get('suggestion', 0)} | "
+            f"{summary['by_severity'].get('info', 0)} | {summary['unresolved']} | {summary['accepted_warnings']} |"
+        ),
+        "",
+        "## 问题明细",
+        "",
+        "| 等级 | Code | 标题 | 来源 | 对象 ID | 状态/接受理由 | 详情 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    if report["issues"]:
+        for issue in report["issues"]:
+            source_text = issue.get("sheet") or "全局"
+            if issue.get("row_number") is not None:
+                source_text += f" 第 {issue['row_number']} 行"
+            if issue.get("column_name"):
+                source_text += f" · {issue['column_name']}"
+            accepted = issue.get("accepted_reason") or (
+                "resolved" if issue["resolved"] else "unresolved"
+            )
+            values = [
+                issue["severity"],
+                issue["code"],
+                issue["title"],
+                source_text,
+                issue.get("entity_id") or "-",
+                accepted,
+                issue["detail"],
+            ]
+            escaped = [
+                str(value).replace("|", "\\|").replace("\n", " ")
+                for value in values
+            ]
+            lines.append("| " + " | ".join(escaped) + " |")
+    else:
+        lines.append("| - | - | 当前 revision 没有校验问题 | - | - | - | - |")
+    lines.extend(["", "> " + report["claim_boundary"], ""])
+    return "\n".join(lines).encode("utf-8")
+
+
 def revision_dict(session: Session, revision: MachineSpecRevision) -> dict[str, Any]:
     issues = session.scalars(select(ValidationIssue).where(ValidationIssue.spec_revision_id == revision.id).order_by(ValidationIssue.created_at)).all()
     confirmations = session.scalars(select(ReviewConfirmation).where(ReviewConfirmation.spec_revision_id == revision.id)).all()
@@ -3942,6 +4138,37 @@ def get_import_issues(import_id: str, session: Session = Depends(app_session)) -
         .order_by(ValidationIssue.created_at)
     ).all()
     return [issue_dict(issue) for issue in issues]
+
+
+@router.get("/api/v1/imports/{import_id}/validation-report")
+def download_import_validation_report(
+    import_id: str,
+    kind: str = Query(pattern="^(json|markdown)$"),
+    session: Session = Depends(app_session),
+) -> Response:
+    """Export the current deterministic validation result without mutating state."""
+    item = session.get(ImportVersion, import_id)
+    if item is None:
+        raise api_error("IMPORT_NOT_FOUND", "导入版本不存在", 404)
+    report = import_validation_report(session, item)
+    if kind == "json":
+        content = stable_json_bytes(report)
+        media_type = "application/json"
+        suffix = "validation-report.json"
+    else:
+        content = render_import_validation_report_markdown(report)
+        media_type = "text/markdown; charset=utf-8"
+        suffix = "validation-report.md"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="Kongpu-{report["project"]["code"]}-{suffix}"'
+            ),
+            "ETag": f'"{sha256_bytes(content)}"',
+        },
+    )
 
 
 @router.get("/api/v1/imports/{import_id}/sheets/{sheet}")

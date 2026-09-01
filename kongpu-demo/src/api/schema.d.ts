@@ -755,6 +755,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/imports/{import_id}/validation-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Import Validation Report
+         * @description Export the current deterministic validation result without mutating state.
+         */
+        get: operations["download_import_validation_report_api_v1_imports__import_id__validation_report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/imports/{import_id}/sheets/{sheet}": {
         parameters: {
             query?: never;
@@ -3151,6 +3171,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_import_validation_report_api_v1_imports__import_id__validation_report_get: {
+        parameters: {
+            query: {
+                kind: string;
+            };
+            header?: never;
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

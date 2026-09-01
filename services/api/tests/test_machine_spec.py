@@ -179,6 +179,110 @@ def test_project_import_revision_and_concurrency(
     assert imported_example["artifact"]["sha256"] == original_artifact
 
 
+def test_validation_report_is_bound_deterministic_and_read_only(
+    client: TestClient,
+    project: dict,
+    imported_example: dict,
+) -> None:
+    import_id = imported_example["import"]["id"]
+    before = client.get(f"/api/v1/imports/{import_id}").json()
+
+    first = client.get(
+        f"/api/v1/imports/{import_id}/validation-report",
+        params={"kind": "json"},
+    )
+    second = client.get(
+        f"/api/v1/imports/{import_id}/validation-report",
+        params={"kind": "json"},
+    )
+    assert first.status_code == 200, first.text
+    assert first.content == second.content
+    assert first.headers["etag"] == second.headers["etag"]
+    assert first.headers["content-disposition"].endswith(
+        f'{project["code"]}-validation-report.json"'
+    )
+
+    report = first.json()
+    assert report["schema"] == "kongpu-validation-report/v1"
+    assert report["project"]["id"] == project["id"]
+    assert report["project"]["plc_target"]["model"] == project["plc_model"]
+    assert report["import"]["id"] == import_id
+    assert (
+        report["import"]["source_artifact"]["sha256"]
+        == imported_example["artifact"]["sha256"]
+    )
+    assert report["spec_revision"]["id"] == imported_example["revision"]["id"]
+    assert (
+        report["spec_revision"]["content_hash"]
+        == imported_example["revision"]["content_hash"]
+    )
+    assert report["summary"]["total"] == len(report["issues"])
+    assert sum(report["summary"]["by_severity"].values()) == len(report["issues"])
+    required_issue_fields = {
+        "code", "severity", "title", "detail", "sheet", "row_number",
+        "column_name", "entity_id", "resolved", "accepted_reason",
+    }
+    assert all(required_issue_fields <= issue.keys() for issue in report["issues"])
+
+    markdown = client.get(
+        f"/api/v1/imports/{import_id}/validation-report",
+        params={"kind": "markdown"},
+    )
+    assert markdown.status_code == 200, markdown.text
+    assert "# 控谱 MachineSpec 校验报告" in markdown.text
+    assert imported_example["artifact"]["sha256"] in markdown.text
+    assert imported_example["revision"]["content_hash"] in markdown.text
+
+    after = client.get(f"/api/v1/imports/{import_id}").json()
+    assert after == before
+    assert client.get(
+        f"/api/v1/imports/{import_id}/validation-report",
+        params={"kind": "csv"},
+    ).status_code == 422
+
+
+def test_validation_report_keeps_projects_isolated(
+    client: TestClient,
+    imported_example: dict,
+) -> None:
+    other_project_response = client.post(
+        "/api/v1/projects",
+        json={"name": "第二个项目", "customer_code": "OTHER"},
+    )
+    assert other_project_response.status_code == 201, other_project_response.text
+    other_project = other_project_response.json()
+    other_template = client.post(
+        f"/api/v1/projects/{other_project['id']}/templates?kind=example"
+    )
+    assert other_template.status_code == 200, other_template.text
+    other_import_response = client.post(
+        f"/api/v1/projects/{other_project['id']}/imports",
+        files={
+            "file": (
+                "Other.xlsx",
+                other_template.content,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+    assert other_import_response.status_code == 201, other_import_response.text
+    other_import = other_import_response.json()
+
+    first_report = client.get(
+        f"/api/v1/imports/{imported_example['import']['id']}/validation-report",
+        params={"kind": "json"},
+    ).json()
+    other_report = client.get(
+        f"/api/v1/imports/{other_import['import']['id']}/validation-report",
+        params={"kind": "json"},
+    ).json()
+    assert first_report["project"]["id"] != other_report["project"]["id"]
+    assert (
+        first_report["import"]["source_artifact"]["id"]
+        != other_report["import"]["source_artifact"]["id"]
+    )
+
+
 def test_lock_gate_and_snapshot(
     client: TestClient,
     imported_example: dict,
