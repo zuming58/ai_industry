@@ -21,7 +21,7 @@
 | 模板下载 | POST /api/v1/projects/{project_id}/templates?kind=blank 或 example |
 | 导入 | POST /api/v1/projects/{project_id}/imports |
 | 导入读取 | GET /api/v1/imports/{import_id}、issues、sheets/{sheet} |
-| 校验报告 | GET /api/v1/imports/{import_id}/validation-report?kind=json 或 markdown |
+| 校验报告 | GET /api/v1/imports/{import_id}/validation-report?kind=json、markdown 或 xlsx |
 | 修订与校验 | PATCH /api/v1/imports/{import_id}/cells、POST validate |
 | 审阅 | GET /api/v1/spec-revisions/{revision_id} |
 | 确认/警告 | PUT confirmations/{view}、POST warnings/{issue_id}/accept |
