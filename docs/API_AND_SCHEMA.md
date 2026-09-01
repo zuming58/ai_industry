@@ -137,7 +137,7 @@ Commit 比较只能在同一 ProgramWorkspace 中执行，使用两个明确 Git
 
 ## MachineSpec v1
 
-导入校验报告可通过 `GET /api/v1/imports/{import_id}/validation-report?kind=json|markdown|xlsx` 导出。JSON 使用 `kongpu-validation-report/v1` 契约，绑定项目与 PLC 目标、ImportVersion、原始 Excel 工件 SHA-256、模板/Schema、当前 MachineSpec revision 及内容哈希，并按 blocker、warning、suggestion、info 汇总完整问题定位。问题按等级、工作表、行、列、code 和 ID 稳定排序；响应使用 ETag 标识内容哈希。`xlsx` 是从不可变原件派生的标记副本，在问题单元格添加等级颜色和批注，并新增 `ValidationReport` 汇总工作表；它不会覆盖原始 Excel。三种导出均为只读操作，不创建持久化工件、不修改 import/revision/status/确认/锁定状态，也不升级厂商工具、硬件或电气验证等级。
+导入版本读取响应同时返回 `source_artifact_id`，P04 可通过通用工件接口下载原始 Excel；该下载只读并校验 SHA-256，原件永不覆盖。导入校验报告可通过 `GET /api/v1/imports/{import_id}/validation-report?kind=json|markdown|xlsx` 导出。JSON 使用 `kongpu-validation-report/v1` 契约，绑定项目与 PLC 目标、ImportVersion、原始 Excel 工件 SHA-256、模板/Schema、当前 MachineSpec revision 及内容哈希，并按 blocker、warning、suggestion、info 汇总完整问题定位。问题按等级、工作表、行、列、code 和 ID 稳定排序；响应使用 ETag 标识内容哈希。`xlsx` 是从不可变原件派生的标记副本，在问题单元格添加等级颜色和批注，并新增 `ValidationReport` 汇总工作表；它不会覆盖原始 Excel。三种报告导出均为只读操作，不创建持久化工件、不修改 import/revision/status/确认/锁定状态，也不升级厂商工具、硬件或电气验证等级。
 
 顶层字段：schema_version、template_version、generated_at、project、plc_target、components、signals、sequence、interlocks、exceptions。
 

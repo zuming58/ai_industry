@@ -18,7 +18,7 @@ M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”�
 - .xlsx 上传、20 MB 门禁、ZIP 路径/体积/条目检查、原件内容寻址保存和 SHA-256 去重。
 - 结构、类型、稳定 ID、引用、I/O 地址、流程可达性、单位和 PLC 目标等确定性规则。
 - 单元格修订创建新 MachineSpec revision，不覆盖原始 Excel；统一审计与 409 乐观并发冲突。
-- P04 可导出只读 JSON/Markdown 校验报告和带颜色/批注的标记 Excel 副本，绑定原始 Excel SHA-256、当前 MachineSpec revision、PLC 目标、Template/Schema 和稳定排序的问题定位；导出不改变状态或验证等级，原始 Excel 保持不可变。
+- P04 可下载不可变原始 Excel，并可导出只读 JSON/Markdown 校验报告和带颜色/批注的标记 Excel 副本；报告绑定原始 Excel SHA-256、当前 MachineSpec revision、PLC 目标、Template/Schema 和稳定排序的问题定位；导出不改变状态或验证等级，原始 Excel 保持不可变。
 - 设备关系、动作流程、节拍、信号时序、I/O、互锁、异常和原始表格审阅视图。
 - Blocker、Warning 接受理由、必需视图确认和不可变锁定快照门禁。
 
@@ -81,7 +81,7 @@ M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”�
 | P01 工作台 | 真实 API/SQLite | 自动验证通过 |
 | P02 项目管理 | 真实 CRUD/归档/恢复 | 自动验证通过 |
 | P03 模板 | 真实 XLSX 生成与下载 | 自动验证通过 |
-| P04 导入校验 | 真实上传、规则、修订与 JSON/Markdown/标记 Excel 校验报告导出 | 自动验证通过 |
+| P04 导入校验 | 真实上传、规则、修订、原始 Excel 下载与 JSON/Markdown/标记 Excel 校验报告导出 | 自动验证通过 |
 | P05 规格审阅 | 真实视图、确认、锁定 | 自动验证通过 |
 | P06 程序工程 | 真实确定性生成与 Git 工作分支 | 自动验证通过；厂商编译未验证 |
 | P07 编译 | 生成后自动审核/编译准备/证据导入；厂商编译未接入 | 自动验证通过；厂商工具未验证 |
@@ -96,7 +96,7 @@ M1、M2 和 M3 前置自动化已达到“代码完成、自动验证通过”�
 
 - 后端 pytest：模板、解析、规则、安全边界、revision、409、锁定、确定性生成、Git 操作、路径守卫、Adapter 契约、自动审核触发/复用/报告哈希/变异检测、参考模拟、候选包重新复核、自动验收稳定复用、非破坏性恢复、结果不继承、证据不可变性、备份恢复，以及 SBOM/许可证清单确定性与完整性。
 - 前端 Vitest：真实 TypeScript 应用壳与 API 数据加载。
-- Playwright 加本机 Microsoft Edge：新建项目、下载范例、上传、P04 校验报告 JSON/Markdown/标记 Excel 三种下载、门禁、8 个视图确认、锁定、生成、加载后编辑、Commit、自动审核复用、编译证据、参考模拟、P09 候选 ZIP/独立复核/自动验收刷新恢复、P10 离线快照/调试分支、P11 双 Commit 结构化比较/统一时间线/恢复分支，以及 P12 设置持久化、兼容矩阵、模板历史、审计、只读 Adapter 检测和多视口溢出检查。
+- Playwright 加本机 Microsoft Edge：新建项目、下载范例、上传、P04 原始 Excel 与校验报告 JSON/Markdown/标记 Excel 下载、门禁、8 个视图确认、锁定、生成、加载后编辑、Commit、自动审核复用、编译证据、参考模拟、P09 候选 ZIP/独立复核/自动验收刷新恢复、P10 离线快照/调试分支、P11 双 Commit 结构化比较/统一时间线/恢复分支，以及 P12 设置持久化、兼容矩阵、模板历史、审计、只读 Adapter 检测和多视口溢出检查。
 - Playwright 同时覆盖错误 .xls 拒绝、刷新恢复，以及 1440×1024、1366×768 下 P03–P11 无页面级横向溢出。
 - py -3.12 scripts/generate-supply-chain.py --check、npm run build 与 npm run test:sites 保持为交付门禁。
 

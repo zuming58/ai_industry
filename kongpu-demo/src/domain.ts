@@ -65,6 +65,7 @@ export type ImportVersion = {
   project_id: string;
   version: number;
   filename: string;
+  source_artifact_id?: string | null;
   status: string;
   revision: number;
   failure_reason?: string | null;

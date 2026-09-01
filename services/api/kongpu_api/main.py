@@ -4223,6 +4223,7 @@ def get_import(import_id: str, session: Session = Depends(app_session)) -> dict[
     return {
         "id": item.id, "project_id": item.project_id, "version": item.version,
         "filename": item.filename, "status": item.status, "revision": item.revision,
+        "source_artifact_id": item.source_artifact_id,
         "failure_reason": item.failure_reason,
         "spec_revision": revision_dict(session, revision) if revision else None,
     }

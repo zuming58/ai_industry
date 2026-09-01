@@ -216,6 +216,16 @@ def test_validation_report_is_bound_deterministic_and_read_only(
         report["spec_revision"]["content_hash"]
         == imported_example["revision"]["content_hash"]
     )
+    imported_details = client.get(f"/api/v1/imports/{import_id}")
+    assert imported_details.status_code == 200, imported_details.text
+    assert (
+        imported_details.json()["source_artifact_id"]
+        == imported_example["artifact"]["id"]
+    )
+    original = client.get(f"/api/v1/artifacts/{imported_example['artifact']['id']}")
+    assert original.status_code == 200, original.text
+    assert original.headers["etag"].strip('"') == imported_example["artifact"]["sha256"]
+    assert original.headers["content-disposition"].endswith('MachineSpec.xlsx"')
     assert report["summary"]["total"] == len(report["issues"])
     assert sum(report["summary"]["by_severity"].values()) == len(report["issues"])
     required_issue_fields = {
